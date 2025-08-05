@@ -1,6 +1,6 @@
 // API Service for backend communication
 class APIService {
-  static baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+  static baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
   // Try to obtain CSRF token from meta tag first and fall back to cookie
   static getCSRFToken() {
@@ -93,18 +93,18 @@ class APIService {
 
   // Authentication methods
   static async login(credentials) {
-    return this.request('/auth/login/', {
+    return this.request('/api/auth/login/', {
       method: 'POST',
       body: JSON.stringify(credentials),
     });
   }
 
   static async logout() {
-    return this.request('/auth/logout/', { method: 'POST' });
+    return this.request('/api/auth/logout/', { method: 'POST' });
   }
 
   static async getCurrentUser() {
-    return this.request('/auth/user/');
+    return this.request('/api/auth/user/');
   }
 
   // Ticket methods
