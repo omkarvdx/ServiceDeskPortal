@@ -76,28 +76,32 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl w-full max-w-lg p-6 fade-in">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center space-x-3">
-            <div className="bg-purple-100 p-2 rounded-lg">
-              <Upload className="w-5 h-5 text-purple-600" />
+      <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] flex flex-col fade-in">
+        {/* Header */}
+        <div className="p-4 border-b">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="bg-purple-100 p-2 rounded-lg">
+                <Upload className="w-5 h-5 text-purple-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Import CTI Records</h2>
+                <p className="text-sm text-gray-600">Upload CSV file to bulk import CTI records</p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">Import CTI Records</h2>
-              <p className="text-sm text-gray-600">Upload CSV file to bulk import CTI records</p>
-            </div>
+            <button
+              onClick={handleClose}
+              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
-          <button
-            onClick={handleClose}
-            className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
         </div>
-
-        <div className="space-y-4">
+        
+        {/* Scrollable Content */}
+        <div className="p-4 overflow-y-auto flex-1">
           {/* Template Download */}
-          <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg">
+          <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg mb-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-blue-900">Need a template?</p>
@@ -114,7 +118,7 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
           </div>
 
           {/* File Upload */}
-          <div>
+          <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Select CSV File
             </label>
@@ -139,26 +143,35 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
             </div>
           </div>
 
-          {/* CSV Format Info */}
-          <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg">
-            <p className="text-sm font-medium text-gray-900 mb-2">CSV Format Requirements:</p>
-            <ul className="text-xs text-gray-700 space-y-1">
-              <li>• <strong>category</strong>: Service category (required)</li>
-              <li>• <strong>type</strong>: Service type (required)</li>
-              <li>• <strong>item</strong>: Specific item description (required)</li>
-              <li>• <strong>resolver_group</strong>: Responsible team (required)</li>
-              <li>• <strong>resolver_group_description</strong>: Details about the resolver group (optional)</li>
-              <li>• <strong>request_type</strong>: Incident, Request, Change, Problem (required)</li>
-              <li>• <strong>sla</strong>: P1, P2, P3, P4 (required)</li>
-              <li>• <strong>bu_number</strong>: Business unit number (optional)</li>
-              <li>• <strong>bu_description</strong>: Business unit description (optional)</li>
-              <li>• <strong>service_description</strong>: Detailed service description (optional)</li>
-            </ul>
+          {/* CSV Format Info - Collapsible */}
+          <div className="mb-4">
+            <details className="group">
+              <summary className="flex justify-between items-center p-2 bg-gray-50 rounded-lg cursor-pointer">
+                <span className="text-sm font-medium text-gray-900">CSV Format Requirements</span>
+                <svg className="w-4 h-4 text-gray-500 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </summary>
+              <div className="mt-2 p-2 bg-gray-50 rounded-b-lg">
+                <ul className="text-xs text-gray-700 space-y-1">
+                  <li>• <strong>category</strong>: Service category (required)</li>
+                  <li>• <strong>type</strong>: Service type (required)</li>
+                  <li>• <strong>item</strong>: Specific item description (required)</li>
+                  <li>• <strong>resolver_group</strong>: Responsible team (required)</li>
+                  <li>• <strong>resolver_group_description</strong>: Details about the resolver group (optional)</li>
+                  <li>• <strong>request_type</strong>: Incident, Request, Change, Problem (required)</li>
+                  <li>• <strong>sla</strong>: P1, P2, P3, P4 (required)</li>
+                  <li>• <strong>bu_number</strong>: Business unit number (optional)</li>
+                  <li>• <strong>bu_description</strong>: Business unit description (optional)</li>
+                  <li>• <strong>service_description</strong>: Detailed service description (optional)</li>
+                </ul>
+              </div>
+            </details>
           </div>
 
           {/* Error Display */}
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm flex items-center">
+            <div className="mb-4 bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm flex items-center">
               <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
               {error}
             </div>
@@ -166,7 +179,7 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
 
           {/* Success Result */}
           {result && (
-            <div className="bg-green-50 border border-green-200 p-3 rounded-lg">
+            <div className="mb-4 bg-green-50 border border-green-200 p-3 rounded-lg">
               <div className="flex items-center mb-2">
                 <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
                 <p className="text-sm font-medium text-green-900">Import Completed</p>
@@ -188,13 +201,15 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
               )}
             </div>
           )}
-
-          {/* Action Buttons */}
-          <div className="flex space-x-3 pt-4">
+        </div>
+        
+        {/* Footer with Action Buttons */}
+        <div className="p-4 border-t bg-gray-50 rounded-b-xl">
+          <div className="flex space-x-3">
             <button
               type="button"
               onClick={handleClose}
-              className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              className="flex-1 px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               {result ? 'Close' : 'Cancel'}
             </button>

@@ -1,6 +1,6 @@
 // API Service for backend communication
 class APIService {
-  static baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+  static baseURL = (process.env.REACT_APP_API_URL || 'http://localhost:8000') + '/api';
 
   // Try to obtain CSRF token from meta tag first and fall back to cookie
   static getCSRFToken() {
@@ -93,26 +93,50 @@ class APIService {
 
   // Authentication methods
   static async login(credentials) {
-    return this.request('/api/auth/login/', {
+    return this.request('/auth/login/', {
       method: 'POST',
       body: JSON.stringify(credentials),
     });
   }
 
   static async logout() {
-    return this.request('/api/auth/logout/', { method: 'POST' });
+    return this.request('/auth/logout/', { method: 'POST' });
   }
 
   static async getCurrentUser() {
-    return this.request('/api/auth/user/');
+    return this.request('/auth/user/');
   }
 
   // Ticket methods
-  static async getTickets(filters = {}) {
-    console.log('Fetching tickets with filters:', JSON.stringify(filters, null, 2));
+  static async deleteTicket(id) {
+    return this.request(`/tickets/${id}/`, {
+      method: 'DELETE',
+    });
+  }
+
+  /**
+   * Fetches tickets with pagination support
+   * @param {Object} filters - Filter criteria
+   * @param {number} page - Page number (1-based)
+   * @param {number} pageSize - Number of items per page
+   * @returns {Promise<{count: number, next: string|null, previous: string|null, results: Array}>}
+   */
+  /**
+   * Fetches tickets with pagination support
+   * @param {Object} filters - Filter criteria
+   * @param {number} page - Page number (1-based)
+   * @param {number} pageSize - Number of items per page
+   * @returns {Promise<{count: number, next: string|null, previous: string|null, results: Array}>}
+   */
+  static async getTickets(filters = {}, page = 1, pageSize = 10) {
+    console.log('Fetching tickets with filters:', JSON.stringify(filters, null, 2), 'page:', page);
     const params = new URLSearchParams();
     
-    // Pass all filters directly to the backend
+    // Add pagination parameters
+    params.append('page', page);
+    params.append('page_size', pageSize);
+    
+    // Add filter parameters
     Object.entries(filters).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') {
         params.append(key, value);
@@ -121,12 +145,25 @@ class APIService {
     
     try {
       const response = await this.request(`/tickets/?${params.toString()}`);
+      
+      // Handle both paginated and non-paginated responses
+      const paginatedResponse = {
+        count: response.count || response.length || 0,
+        next: response.next || null,
+        previous: response.previous || null,
+        results: Array.isArray(response) ? response : (response.results || [])
+      };
+      
       console.log('API Response received:', {
         status: 'success',
-        count: response.length,
-        firstItem: response[0] || 'No items returned'
+        count: paginatedResponse.count,
+        page: page,
+        pageSize: pageSize,
+        hasNext: !!paginatedResponse.next,
+        hasPrevious: !!paginatedResponse.previous
       });
-      return response;
+      
+      return paginatedResponse;
     } catch (error) {
       console.error('Error in getTickets:', {
         message: error.message,
@@ -233,15 +270,60 @@ class APIService {
     });
   }
 
-  // CTI methods
+  /**
+   * Fetches CTI Records with pagination and filtering support
+   * @param {Object} params - Filter and pagination parameters
+   * @param {number} [params.page=1] - Page number (1-based)
+   * @param {number} [params.page_size=10] - Number of items per page
+   * @param {string} [params.search] - Search term for category and resolver_group
+   * @param {string} [params.ordering] - Field to order by (prefix with - for descending)
+   * @returns {Promise<{count: number, next: string|null, previous: string|null, results: Array}>}
+   */
   static async getCTIRecords(params = {}) {
-    const queryString = new URLSearchParams(params).toString();
-    return this.request(`/admin/cti/?${queryString}`);
+    const { page = 1, page_size = 10, ...filters } = params;
+    const queryParams = new URLSearchParams({
+      page,
+      page_size,
+      ...filters
+    });
+    
+    const response = await this.request(`/admin/cti-records/?${queryParams.toString()}`);
+    
+    // Ensure consistent response format
+    return {
+      count: response.count || 0,
+      next: response.next || null,
+      previous: response.previous || null,
+      results: Array.isArray(response.results) ? response.results : (Array.isArray(response) ? response : [])
+    };
   }
 
+  /**
+   * Fetches read-only CTI Records with pagination and filtering support
+   * @param {Object} params - Filter and pagination parameters
+   * @param {number} [params.page=1] - Page number (1-based)
+   * @param {number} [params.page_size=10] - Number of items per page
+   * @param {string} [params.search] - Search term for category and resolver_group
+   * @param {string} [params.ordering] - Field to order by (prefix with - for descending)
+   * @returns {Promise<{count: number, next: string|null, previous: string|null, results: Array}>}
+   */
   static async getCTIRecordsReadOnly(params = {}) {
-    const queryString = new URLSearchParams(params).toString();
-    return this.request(`/cti/?${queryString}`);
+    const { page = 1, page_size = 10, ...filters } = params;
+    const queryParams = new URLSearchParams({
+      page,
+      page_size,
+      ...filters
+    });
+    
+    const response = await this.request(`/cti/?${queryParams.toString()}`);
+    
+    // Ensure consistent response format
+    return {
+      count: response.count || 0,
+      next: response.next || null,
+      previous: response.previous || null,
+      results: Array.isArray(response.results) ? response.results : (Array.isArray(response) ? response : [])
+    };
   }
 
   static async getCTIExamples(ctiId) {
@@ -262,106 +344,47 @@ class APIService {
   // Admin CTI Management methods
   static async getAdminCTIRecords(params = {}) {
     const queryString = new URLSearchParams(params).toString();
-    return this.request(`/admin/cti/?${queryString}`);
+    return this.request(`/cti/?${queryString}`);
   }
 
   static async createCTIRecord(data) {
-    return this.request('/admin/cti/', {
+    return this.request('/cti/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   static async updateCTIRecord(id, data) {
-    return this.request(`/admin/cti/${id}/`, {
+    return this.request(`/cti/${id}/`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   static async deleteCTIRecord(id) {
-    return this.request(`/admin/cti/${id}/`, {
+    return this.request(`/cti/${id}/`, {
       method: 'DELETE',
     });
   }
 
   static async regenerateCTIEmbedding(id) {
-    return this.request(`/admin/cti/${id}/regenerate-embedding/`, {
+    return this.request(`/cti/${id}/regenerate-embedding/`, {
       method: 'POST',
     });
   }
 
   static async bulkCTIActions(data) {
-    return this.request('/admin/cti/bulk-actions/', {
+    return this.request('/cti/bulk-actions/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   static async getCTIFilterOptions() {
-    return this.request('/admin/cti/filter-options/');
+    return this.request('/cti/filter-options/');
   }
 
   // CTI Recommendations methods
-  static async getCTIRecommendations() {
-    return this.request('/admin/cti/recommendations/');
-  }
-
-  static async applyCTIRecommendation(recommendationId, action) {
-    return this.request(`/admin/cti/recommendations/${recommendationId}/`, {
-      method: 'POST',
-      body: JSON.stringify({ action })
-    });
-  }
-
-  static async importCTIRecords(formData) {
-    return this.request('/admin/cti/import-csv/', {
-      method: 'POST',
-      body: formData,
-      headers: {}, // Let browser set content-type for FormData
-    });
-  }
-
-  // Training Examples
-  static async getTrainingExamples(params = {}) {
-    const queryString = new URLSearchParams(params).toString();
-    return this.request(`/admin/training-examples/?${queryString}`);
-  }
-
-  static async createTrainingExample(data) {
-    return this.request('/admin/training-examples/', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  static async updateTrainingExample(id, data) {
-    return this.request(`/admin/training-examples/${id}/`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  }
-
-  static async deleteTrainingExample(id) {
-    return this.request(`/admin/training-examples/${id}/`, {
-      method: 'DELETE',
-    });
-  }
-
-  static async getCTITrainingExamples(ctiId) {
-    return this.request(`/cti/${ctiId}/training-examples/`);
-  }
-
-  static async getTrainingStats() {
-    return this.request('/admin/training-stats/');
-  }
-
-  // AI Performance Analytics
-  static async getAIPerformanceAnalytics() {
-    return this.request('/admin/ai-performance-analytics/');
-  }
-
-  // Smart Recommendations
   static async getCTIRecommendations() {
     return this.request('/admin/cti-recommendations/');
   }
@@ -373,9 +396,112 @@ class APIService {
     });
   }
 
+  static async importCTIRecords(formData) {
+    return this.request('/cti/import-csv/', {
+      method: 'POST',
+      body: formData,
+      headers: {}, // Let browser set content-type for FormData
+    });
+  }
+
+  // Training Examples
+  static async getTrainingExamples(params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/training-examples/?${queryString}`);
+  }
+
+  static async createTrainingExample(data) {
+    return this.request('/training-examples/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static async updateTrainingExample(id, data) {
+    return this.request(`/training-examples/${id}/`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static async deleteTrainingExample(id) {
+    return this.request(`/training-examples/${id}/`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async getCTITrainingExamples(ctiId) {
+    return this.request(`/cti/${ctiId}/training-examples/`);
+  }
+
+  static async getTrainingStats() {
+    return this.request('/training-stats/');
+  }
+
+  // AI Performance Analytics
+  static async getAIPerformanceAnalytics() {
+    return this.request('/ai-performance-analytics/');
+  }
+
+  // Smart Recommendations - Implementation moved to the first declaration
+
   // CTI Trends (for enhanced stats)
   static async getCTITrends() {
-    return this.request('/admin/cti-trends/');
+    return this.request('/cti-trends/');
+  }
+
+  // Table Management - Tickets
+  static async getTicketTableData(params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/table/tickets/?${queryString}`);
+  }
+
+  static async updateTicketTableRow(id, data) {
+    return this.request(`/table/tickets/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    });
+  }
+
+  static async bulkUpdateTicketsTable(data) {
+    return this.request('/table/tickets/bulk_update/', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  static async bulkDeleteTickets(ids) {
+    return this.request('/table/tickets/bulk_delete/', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    });
+  }
+
+  // Table Management - CTI Records
+  static async getCTITableData(params = {}) {
+    const queryString = new URLSearchParams(params).toString();
+    return this.request(`/table/cti/?${queryString}`);
+  }
+
+  static async updateCTITableRow(id, data) {
+    return this.request(`/table/cti/${id}/`, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    });
+  }
+
+  static async bulkUpdateCTIRecords(data) {
+    return this.request('/table/cti/bulk_update/', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  static async bulkDeleteCTIRecords(ids) {
+    return this.request('/table/cti/bulk_delete/', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
+    });
   }
 
   // Queue methods

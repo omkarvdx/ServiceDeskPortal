@@ -1,7 +1,17 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from . import views
+from .views_table import TicketTableViewSet, CTITableViewSet
+
+# Create a router and register our viewsets
+router = DefaultRouter()
+router.register(r'table/tickets', TicketTableViewSet, basename='ticket-table')
+router.register(r'table/cti', CTITableViewSet, basename='cti-table')
 
 urlpatterns = [
+    # Include router URLs
+    path('', include(router.urls)),
+    
     # Authentication endpoints
     path("auth/register/", views.UserRegistrationView.as_view(), name="register"),
     path("auth/login/", views.login_view, name="login"),
@@ -10,6 +20,7 @@ urlpatterns = [
     path("auth/csrf/", views.csrf_token_view, name="csrf_token"),
     # Ticket endpoints
     path("tickets/", views.TicketListView.as_view(), name="ticket_list"),
+    # path("tickets/", views.TicketListView.as_view(), name="ticket_list"),
     path("tickets/export/", views.TicketExportView.as_view(), name="ticket_export"),
     path("tickets/create/", views.TicketCreateView.as_view(), name="ticket_create"),
     path("tickets/bulk-upload/", views.BulkTicketUploadView.as_view(), name="ticket_bulk_upload"),

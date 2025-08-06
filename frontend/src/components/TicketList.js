@@ -5,6 +5,10 @@ import {
   AlertCircle, 
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Filter,
   X,
   Eye,
@@ -217,7 +221,155 @@ const SortableHeader = ({ children, sortKey, currentSort, onSort }) => {
   );
 };
 
-const TicketList = ({ tickets, onTicketClick, userRole, loading, onImportComplete }) => {
+// Pagination component
+const Pagination = ({ currentPage, totalPages, onPageChange }) => {
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisiblePages = 5; // Show max 5 page numbers at a time
+    
+    if (totalPages <= maxVisiblePages) {
+      // Show all pages if total pages is less than maxVisiblePages
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+    } else {
+      // Show first page, current page, and pages around it
+      let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+      let endPage = startPage + maxVisiblePages - 1;
+      
+      if (endPage > totalPages) {
+        endPage = totalPages;
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+      }
+      
+      if (startPage > 1) {
+        pages.push(1);
+        if (startPage > 2) {
+          pages.push('...');
+        }
+      }
+      
+      for (let i = startPage; i <= endPage; i++) {
+        pages.push(i);
+      }
+      
+      if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+          pages.push('...');
+        }
+        pages.push(totalPages);
+      }
+    }
+    
+    return pages;
+  };
+
+  return (
+    <div className="flex items-center justify-between mt-4 px-4 py-3 border-t border-gray-200">
+      <div className="flex-1 flex justify-between sm:hidden">
+        <button
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          className={`relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
+            currentPage === 1 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          Previous
+        </button>
+        <button
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === totalPages || totalPages === 0}
+          className={`ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md ${
+            currentPage === totalPages || totalPages === 0 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          Next
+        </button>
+      </div>
+      <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm text-gray-700">
+            Showing <span className="font-medium">{(currentPage - 1) * 10 + 1}</span> to{' '}
+            <span className="font-medium">
+              {Math.min(currentPage * 10, totalPages * 10)}
+            </span>{' '}
+            of <span className="font-medium">{totalPages * 10}</span> results
+          </p>
+        </div>
+        <div>
+          <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+            <button
+              onClick={() => onPageChange(1)}
+              disabled={currentPage === 1}
+              className={`relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium ${
+                currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <span className="sr-only">First</span>
+              <ChevronsLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+            <button
+              onClick={() => onPageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              className={`relative inline-flex items-center px-2 py-2 border border-gray-300 bg-white text-sm font-medium ${
+                currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <span className="sr-only">Previous</span>
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </button>
+            
+            {getPageNumbers().map((page, index) => (
+              <button
+                key={index}
+                onClick={() => typeof page === 'number' && onPageChange(page)}
+                disabled={page === '...'}
+                className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                  page === currentPage
+                    ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                    : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                } ${page === '...' ? 'cursor-default' : 'cursor-pointer'}`}
+              >
+                {page}
+              </button>
+            ))}
+            
+            <button
+              onClick={() => onPageChange(currentPage + 1)}
+              disabled={currentPage === totalPages || totalPages === 0}
+              className={`relative inline-flex items-center px-2 py-2 border border-gray-300 bg-white text-sm font-medium ${
+                currentPage === totalPages || totalPages === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <span className="sr-only">Next</span>
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
+            </button>
+            <button
+              onClick={() => onPageChange(totalPages)}
+              disabled={currentPage === totalPages || totalPages === 0}
+              className={`relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium ${
+                currentPage === totalPages || totalPages === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              <span className="sr-only">Last</span>
+              <ChevronsRight className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </nav>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TicketList = ({ 
+  tickets, 
+  onTicketClick, 
+  userRole, 
+  loading, 
+  onImportComplete, 
+  pagination = { currentPage: 1, totalPages: 1, totalItems: 0 },
+  onPageChange = () => {}
+}) => {
   const fileInputRef = useRef(null);
   
   const exportToCSV = () => {
@@ -334,6 +486,27 @@ const TicketList = ({ tickets, onTicketClick, userRole, loading, onImportComplet
           bValue = keys.reduce((obj, key) => obj?.[key], b);
         }
 
+        // Special handling for ticket_id to sort numerically
+        if (sortConfig.key === 'ticket_id' && aValue && bValue) {
+          // Extract numeric part from ticket_id (e.g., 'TKT-000153' -> 153)
+          const getNumericPart = (id) => {
+            const match = id.match(/\d+/);
+            return match ? parseInt(match[0], 10) : 0;
+          };
+          
+          const aNum = getNumericPart(aValue);
+          const bNum = getNumericPart(bValue);
+          
+          return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
+        }
+
+        // Default string comparison for other fields
+        if (aValue === null || aValue === undefined) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (bValue === null || bValue === undefined) return sortConfig.direction === 'asc' ? 1 : -1;
+        
+        aValue = String(aValue).toLowerCase();
+        bValue = String(bValue).toLowerCase();
+        
         if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
         if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
@@ -480,6 +653,15 @@ const TicketList = ({ tickets, onTicketClick, userRole, loading, onImportComplet
               ))}
             </TableBody>
           </Table>
+          
+          {/* Pagination */}
+          <div className="px-6 py-4 border-t">
+            <Pagination 
+              currentPage={pagination.currentPage}
+              totalPages={pagination.totalPages}
+              onPageChange={onPageChange}
+            />
+          </div>
         </div>
       </div>
     </div>

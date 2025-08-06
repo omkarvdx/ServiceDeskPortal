@@ -30,6 +30,14 @@ const Dashboard = ({ user, onLogout }) => {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [filters, setFilters] = useState({ classification: '', search: '' });
   const [refreshing, setRefreshing] = useState(false);
+  const [pagination, setPagination] = useState({
+    currentPage: 1,
+    pageSize: 10,
+    totalItems: 0,
+    totalPages: 1,
+    hasNext: false,
+    hasPrevious: false
+  });
 
   const exportToExcel = (tickets) => {
     try {
@@ -79,13 +87,25 @@ const Dashboard = ({ user, onLogout }) => {
     }
   };
 
-  const fetchTickets = useCallback(async () => {
+  const fetchTickets = useCallback(async (page = 1) => {
     try {
       setLoading(true);
-      console.log('Fetching tickets with filters:', filters);
-      const data = await APIService.getTickets(filters);
-      console.log('Received tickets data:', data);
-      setTickets(data);
+      console.log('Fetching tickets with filters:', filters, 'page:', page);
+      const response = await APIService.getTickets(filters, page, pagination.pageSize);
+      console.log('Received tickets data:', response);
+      
+      // Update tickets and pagination state
+      setTickets(Array.isArray(response.results) ? response.results : []);
+      
+      setPagination(prev => ({
+        ...prev,
+        currentPage: page,
+        totalItems: response.count || 0,
+        totalPages: Math.ceil((response.count || 0) / pagination.pageSize),
+        hasNext: !!response.next,
+        hasPrevious: !!response.previous
+      }));
+      
     } catch (error) {
       console.error('Error fetching tickets:', error);
       console.error('Error details:', {
@@ -96,7 +116,7 @@ const Dashboard = ({ user, onLogout }) => {
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, pagination.pageSize]);
 
   useEffect(() => {
     if (activeTab === 'tickets') {
@@ -105,11 +125,18 @@ const Dashboard = ({ user, onLogout }) => {
   }, [filters, activeTab, fetchTickets]);
 
   const handleRefresh = useCallback(() => {
-    if (!refreshing) {
-      setRefreshing(true);
-      fetchTickets().finally(() => setRefreshing(false));
-    }
-  }, [fetchTickets, refreshing]);
+    setRefreshing(true);
+    // Reset to first page when refreshing
+    setPagination(prev => ({ ...prev, currentPage: 1 }));
+    fetchTickets(1).finally(() => setRefreshing(false));
+  }, [fetchTickets]);
+
+  // Update filters and reset to first page
+  const updateFilters = useCallback((newFilters) => {
+    setFilters(newFilters);
+    // Reset to first page when filters change
+    setPagination(prev => ({ ...prev, currentPage: 1 }));
+  }, []);
 
   const handleTicketImport = async (file) => {
     try {
@@ -275,6 +302,13 @@ const Dashboard = ({ user, onLogout }) => {
           label: 'CTI Records',
           icon: Database,
           description: 'View CTI master data'
+        },
+        {
+          id: 'manage_cti',
+          label: 'Manage CTI',
+          icon: Database,
+          description: 'Manage CTI master data',
+          adminOnly: true
         }
       );
     } else {
@@ -312,6 +346,13 @@ const Dashboard = ({ user, onLogout }) => {
         return user.role === USER_ROLES.ADMIN ? (
           <div className="p-6">
             <AIPerformanceDashboard />
+          </div>
+        ) : <AccessDenied />;
+        
+      case 'manage_cti':
+        return user.role === USER_ROLES.ADMIN ? (
+          <div className="p-6">
+            <AdminCTIManagement user={user} />
           </div>
         ) : <AccessDenied />;
       case 'admin':
@@ -391,7 +432,8 @@ const Dashboard = ({ user, onLogout }) => {
                       type="text"
                       placeholder="Search tickets by ID, summary, or description..."
                       value={filters.search}
-                      onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                      onChange={(e) => updateFilters({ ...filters, search: e.target.value })}
+                      onKeyPress={(e) => e.key === 'Enter' && fetchTickets(1)}
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
@@ -400,7 +442,7 @@ const Dashboard = ({ user, onLogout }) => {
                   <Filter className="w-5 h-5 text-gray-400" />
                   <select
                     value={filters.classification || ''}
-                    onChange={(e) => setFilters({ ...filters, classification: e.target.value })}
+                    onChange={(e) => updateFilters({ ...filters, classification: e.target.value })}
                     className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="">All</option>
@@ -417,6 +459,12 @@ const Dashboard = ({ user, onLogout }) => {
               onTicketClick={handleTicketClick}
               userRole={user.role}
               loading={loading}
+              pagination={{
+                currentPage: pagination.currentPage,
+                totalPages: pagination.totalPages,
+                totalItems: pagination.totalItems
+              }}
+              onPageChange={(page) => fetchTickets(page)}
             />
           </div>
         );

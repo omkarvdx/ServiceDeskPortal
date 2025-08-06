@@ -28,6 +28,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 
 # DRF imports
 from rest_framework import generics, status, filters, permissions, viewsets, renderers
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.pagination import CTIRecordPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import (
@@ -56,6 +58,8 @@ from .ai_service import classification_service
 from .permissions import (
     IsAdminOnly, CTIPermission
 )
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -312,11 +316,22 @@ class TicketExportView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+class TicketPagination(PageNumberPagination):
+    """
+    Custom pagination class for ticket listings.
+    Allows clients to set page size via query parameter up to a maximum of 100 items per page.
+    """
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
 class TicketListView(generics.ListAPIView):
-    """List tickets based on user role"""
+    """List tickets based on user role, filters, and pagination"""
 
     serializer_class = TicketListSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = TicketPagination
 
     def get_queryset(self):
         user = self.request.user
@@ -327,40 +342,37 @@ class TicketListView(generics.ListAPIView):
         if user.role == "end_user":
             queryset = queryset.filter(created_by=user)
         elif user.role == "support_engineer":
-            pass
+            pass  # Future logic can be added here
 
-        # Handle classification filter
+        # Filter by classification
         classification = self.request.query_params.get("classification")
         if classification == "unclassified":
-            # Tickets with no predicted CTI or no resolver group in predicted CTI
             queryset = queryset.filter(
-                Q(predicted_cti__isnull=True) | 
+                Q(predicted_cti__isnull=True) |
                 Q(predicted_cti__resolver_group__isnull=True) |
                 Q(predicted_cti__resolver_group__exact='')
             )
         elif classification == "corrected":
-            # Tickets with a predicted CTI that has a resolver group
             queryset = queryset.filter(
                 predicted_cti__isnull=False,
                 predicted_cti__resolver_group__isnull=False
             ).exclude(predicted_cti__resolver_group__exact='')
 
-        # Handle status filter
-        status_filter = self.request.query_params.get("status")
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
+        # Filter by status
+        status = self.request.query_params.get("status")
+        if status:
+            queryset = queryset.filter(status=status)
 
-        # Handle search
+        # Search filter
         search = self.request.query_params.get("search")
         if search:
             queryset = queryset.filter(
-                Q(ticket_id__icontains=search)
-                | Q(summary__icontains=search)
-                | Q(description__icontains=search)
+                Q(ticket_id__icontains=search) |
+                Q(summary__icontains=search) |
+                Q(description__icontains=search)
             )
 
         return queryset
-
 
 class TicketDetailView(generics.RetrieveUpdateAPIView):
     """Get and update ticket details"""
@@ -389,10 +401,13 @@ class TicketDetailView(generics.RetrieveUpdateAPIView):
 
 
 class CTIRecordListView(generics.ListAPIView):
-    """List CTI records for admins (read-only)"""
+    """
+    List CTI records for admins (read-only), with optional filters and pagination.
+    """
 
     serializer_class = CTIRecordSerializer
     permission_classes = [IsAdminOnly]
+    pagination_class = CTIRecordPagination
 
     def get_queryset(self):
         if self.request.user.role not in ["support_engineer", "admin"]:
@@ -407,10 +422,10 @@ class CTIRecordListView(generics.ListAPIView):
         search = self.request.query_params.get("search")
         if search:
             queryset = queryset.filter(
-                Q(category__icontains=search)
-                | Q(type__icontains=search)
-                | Q(item__icontains=search)
-                | Q(resolver_group__icontains=search)
+                Q(category__icontains=search) |
+                Q(type__icontains=search) |
+                Q(item__icontains=search) |
+                Q(resolver_group__icontains=search)
             )
 
         return queryset
@@ -987,25 +1002,30 @@ class BulkTicketUploadView(APIView):
 
 
 class AdminCTIRecordViewSet(viewsets.ModelViewSet):
-    """Admin viewset for CTI record management"""
+    """
+    ViewSet for Admin to manage CTI Records with optional filtering, search, and pagination.
+    """
+    queryset = CTIRecord.objects.all().order_by('-updated_at')
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CTIRecordPagination
 
-    serializer_class = AdminCTIRecordSerializer
-    permission_classes = [CTIPermission]
-    filter_backends = [
-        DjangoFilterBackend,
-        filters.SearchFilter,
-        filters.OrderingFilter,
-    ]
-    filterset_fields = ["category", "type", "resolver_group", "request_type", "sla"]
-    search_fields = ["category", "type", "item", "resolver_group"]
-    ordering_fields = ["created_at", "updated_at", "category", "type", "item"]
-    ordering = ["-updated_at"]
+    # Configure filtering, search, and ordering
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['category', 'type', 'resolver_group', 'request_type', 'sla']
+    search_fields = ['bu_number', 'category', 'item', 'resolver_group', 'service_description', 'bu_description']
+    ordering_fields = ['id', 'category', 'resolver_group', 'updated_at', 'created_at']
+    ordering = ['-updated_at']
+
+    def get_serializer_class(self):
+        if self.action in ["create", "update", "partial_update"]:
+            return CTIRecordCreateUpdateSerializer
+        return AdminCTIRecordSerializer
 
     def get_queryset(self):
         if self.request.user.role not in ["support_engineer", "admin"]:
             return CTIRecord.objects.none()
 
-        queryset = CTIRecord.objects.all()
+        queryset = super().get_queryset()
 
         has_embedding = self.request.query_params.get("has_embedding")
         if has_embedding is not None:
@@ -1028,104 +1048,76 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         if request.user.role != "admin":
-            return Response({"error": "Admin access required"}, status=403)
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
         if request.user.role != "admin":
-            return Response({"error": "Admin access required"}, status=403)
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
         if request.user.role != "admin":
-            return Response({"error": "Admin access required"}, status=403)
-        return super().destroy(request, *args, **kwargs)
-
-    def get_serializer_class(self):
-        if self.action in ["create", "update", "partial_update"]:
-            return CTIRecordCreateUpdateSerializer
-        return AdminCTIRecordSerializer
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-
         stats = self.get_cti_stats(queryset)
 
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
             response = self.get_paginated_response(serializer.data)
-            response.data["stats"] = stats
+            response.data['stats'] = stats
             return response
 
         serializer = self.get_serializer(queryset, many=True)
-        return Response({"results": serializer.data, "stats": stats})
+        return Response({'results': serializer.data, 'stats': stats})
 
     def get_cti_stats(self, queryset):
         total_count = queryset.count()
         has_embedding_count = queryset.exclude(embedding_vector__isnull=True).count()
-
-        categories = (
-            queryset.values("category").annotate(count=Count("id")).order_by("-count")
-        )
-        resolver_groups = (
-            queryset.values("resolver_group")
-            .annotate(count=Count("id"))
-            .order_by("-count")
-        )
-
-        used_records = (
-            queryset.filter(
-                Q(predicted_tickets__isnull=False) | Q(corrected_tickets__isnull=False)
-            )
-            .distinct()
-            .count()
-        )
+        used_records_count = queryset.filter(
+            Q(predicted_tickets__isnull=False) | Q(corrected_tickets__isnull=False)
+        ).distinct().count()
 
         return {
             "total_records": total_count,
             "has_embeddings": has_embedding_count,
             "missing_embeddings": total_count - has_embedding_count,
-            "embedding_coverage": (
-                round((has_embedding_count / total_count) * 100, 1)
-                if total_count > 0
-                else 0
-            ),
-            "used_records": used_records,
-            "unused_records": total_count - used_records,
-            "usage_rate": (
-                round((used_records / total_count) * 100, 1) if total_count > 0 else 0
-            ),
-            "top_categories": list(categories[:5]),
-            "top_resolver_groups": list(resolver_groups[:5]),
+            "embedding_coverage": (round((has_embedding_count / total_count) * 100, 1) if total_count > 0 else 0),
+            "used_records": used_records_count,
+            "unused_records": total_count - used_records_count,
+            "usage_rate": (round((used_records_count / total_count) * 100, 1) if total_count > 0 else 0),
+            "top_categories": list(queryset.values("category").annotate(count=Count("id")).order_by("-count")[:5]),
+            "top_resolver_groups": list(queryset.values("resolver_group").annotate(count=Count("id")).order_by("-count")[:5]),
         }
 
     @action(detail=True, methods=["post"])
     def regenerate_embedding(self, request, pk=None):
+        if request.user.role != "admin":
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
         cti_record = self.get_object()
-
         try:
             from .ai_service import classification_service
-
             cti_text = (
                 f"{cti_record.bu_number} {cti_record.category} {cti_record.type} {cti_record.item} "
                 f"{cti_record.request_type} {cti_record.sla} {cti_record.service_description} "
                 f"{cti_record.bu_description} {cti_record.resolver_group_description}"
             )
             embedding = classification_service.get_embedding(cti_text)
-
             if embedding:
                 cti_record.embedding_vector = embedding
                 cti_record.save(update_fields=["embedding_vector"])
-                return Response(
-                    {"success": True, "message": "Embedding regenerated successfully"}
-                )
+                return Response({"success": True, "message": "Embedding regenerated successfully"})
             else:
                 return Response(
                     {"success": False, "message": "Failed to generate embedding"},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
-
         except Exception as e:
             return Response(
                 {"success": False, "message": f"Error generating embedding: {str(e)}"},
@@ -1135,37 +1127,34 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["post"])
     def bulk_actions(self, request):
         if request.user.role != "admin":
-            return Response({"error": "Admin access required"}, status=403)
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
         serializer = BulkCTIActionSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         data = serializer.validated_data
         cti_ids = data["cti_ids"]
-        action = data["action"]
-
+        action_type = data["action"]
         cti_records = CTIRecord.objects.filter(id__in=cti_ids)
 
         try:
-            if action == "regenerate_embeddings":
+            if action_type == "regenerate_embeddings":
                 return self._bulk_regenerate_embeddings(cti_records)
-            elif action == "delete":
+            elif action_type == "delete":
                 return self._bulk_delete(cti_records)
-            elif action == "bulk_update":
+            elif action_type == "bulk_update":
                 return self._bulk_update(cti_records, data)
-
         except Exception as e:
             return Response(
                 {"success": False, "message": f"Bulk action failed: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        return Response({"success": False, "message": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
 
     def _bulk_regenerate_embeddings(self, cti_records):
         from .ai_service import classification_service
-
         updated_count = 0
         failed_count = 0
-
         for cti_record in cti_records:
             try:
                 cti_text = (
@@ -1174,136 +1163,106 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
                     f"{cti_record.bu_description} {cti_record.resolver_group_description}"
                 )
                 embedding = classification_service.get_embedding(cti_text)
-
                 if embedding:
                     cti_record.embedding_vector = embedding
                     cti_record.save(update_fields=["embedding_vector"])
                     updated_count += 1
                 else:
                     failed_count += 1
-
             except Exception:
                 failed_count += 1
-
-        return Response(
-            {
-                "success": True,
-                "updated_count": updated_count,
-                "failed_count": failed_count,
-                "message": f"Regenerated embeddings for {updated_count} records, {failed_count} failed",
-            }
-        )
+        return Response({
+            "success": True,
+            "updated_count": updated_count,
+            "failed_count": failed_count,
+            "message": f"Regenerated embeddings for {updated_count} records, {failed_count} failed",
+        })
 
     def _bulk_delete(self, cti_records):
+        # Find records that are in use
         used_records = cti_records.filter(
             Q(predicted_tickets__isnull=False) | Q(corrected_tickets__isnull=False)
         ).distinct()
-
-        if used_records.exists():
-            return Response(
-                {
-                    "success": False,
-                    "message": f"Cannot delete {used_records.count()} records that are being used by tickets",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        deleted_count = cti_records.count()
-        cti_records.delete()
-
-        return Response(
-            {
-                "success": True,
-                "deleted_count": deleted_count,
-                "message": f"Successfully deleted {deleted_count} CTI records",
-            }
+        
+        # Get records that can be deleted (not in use)
+        deletable_records = cti_records.exclude(
+            id__in=used_records.values_list('id', flat=True)
         )
+        
+        # Delete only the records that are not in use
+        deleted_count, _ = deletable_records.delete()
+        
+        # Prepare response
+        response = {
+            "success": True,
+            "deleted_count": deleted_count,
+            "skipped_count": used_records.count(),
+            "message": f"Successfully deleted {deleted_count} CTI records"
+        }
+        
+        # Add warning if some records couldn't be deleted
+        if used_records.exists():
+            response["warning"] = f"Skipped {used_records.count()} records that are in use"
+            used_ids = list(used_records.values_list('id', flat=True))
+            response["used_record_ids"] = used_ids
+            
+        return Response(response)
 
     def _bulk_update(self, cti_records, data):
-        update_fields = []
-
+        update_data = {}
         if "resolver_group" in data and data["resolver_group"]:
-            cti_records.update(resolver_group=data["resolver_group"])
-            update_fields.append("resolver_group")
-
+            update_data["resolver_group"] = data["resolver_group"]
         if "request_type" in data and data["request_type"]:
-            cti_records.update(request_type=data["request_type"])
-            update_fields.append("request_type")
-
+            update_data["request_type"] = data["request_type"]
         if "sla" in data and data["sla"]:
-            cti_records.update(sla=data["sla"])
-            update_fields.append("sla")
+            update_data["sla"] = data["sla"]
+        
+        if not update_data:
+            return Response({"success": False, "message": "No fields to update provided."}, status=status.HTTP_400_BAD_REQUEST)
 
-        updated_count = cti_records.count()
-
-        return Response(
-            {
-                "success": True,
-                "updated_count": updated_count,
-                "updated_fields": update_fields,
-                "message": f"Successfully updated {updated_count} CTI records",
-            }
-        )
+        updated_count = cti_records.update(**update_data)
+        return Response({
+            "success": True,
+            "updated_count": updated_count,
+            "updated_fields": list(update_data.keys()),
+            "message": f"Successfully updated {updated_count} CTI records",
+        })
 
     @action(detail=False, methods=["get"])
     def filter_options(self, request):
         queryset = CTIRecord.objects.all()
-
         options = {
-            "categories": list(
-                queryset.values_list("category", flat=True)
-                .distinct()
-                .order_by("category")
-            ),
-            "types": list(
-                queryset.values_list("type", flat=True).distinct().order_by("type")
-            ),
-            "resolver_groups": list(
-                queryset.values_list("resolver_group", flat=True)
-                .distinct()
-                .order_by("resolver_group")
-            ),
-            "request_types": list(
-                queryset.values_list("request_type", flat=True)
-                .distinct()
-                .order_by("request_type")
-            ),
-            "slas": list(
-                queryset.values_list("sla", flat=True).distinct().order_by("sla")
-            ),
+            "categories": sorted(list(queryset.values_list("category", flat=True).distinct())),
+            "types": sorted(list(queryset.values_list("type", flat=True).distinct())),
+            "resolver_groups": sorted(list(queryset.values_list("resolver_group", flat=True).distinct())),
+            "request_types": sorted(list(queryset.values_list("request_type", flat=True).distinct())),
+            "slas": sorted(list(queryset.values_list("sla", flat=True).distinct())),
             "usage_options": [
-                {"value": "all", "label": "All Records"},
+                {"value": "", "label": "All Usage"},
                 {"value": "used", "label": "Used in Tickets"},
                 {"value": "unused", "label": "Never Used"},
             ],
             "embedding_options": [
-                {"value": "all", "label": "All Records"},
+                {"value": "", "label": "All Embeddings"},
                 {"value": "true", "label": "Has Embedding"},
                 {"value": "false", "label": "Missing Embedding"},
             ],
         }
-
         return Response(options)
 
     @action(detail=False, methods=["post"])
     def import_csv(self, request):
         if request.user.role != "admin":
-            return Response({"error": "Admin access required"}, status=403)
-        import csv
-        import io
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
 
         if "file" not in request.FILES:
-            return Response(
-                {"success": False, "message": "No file provided"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"success": False, "message": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
 
         csv_file = request.FILES["file"]
-
         try:
             csv_data = csv_file.read().decode("utf-8")
             csv_reader = csv.DictReader(io.StringIO(csv_data))
-
+            
             created_count = 0
             updated_count = 0
             error_count = 0
@@ -1311,10 +1270,8 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
 
             for row_num, row in enumerate(csv_reader, start=2):
                 try:
-                    cleaned_row = {
-                        k.strip(): v.strip() for k, v in row.items() if v.strip()
-                    }
-
+                    cleaned_row = {k.strip(): v.strip() for k, v in row.items() if v and v.strip()}
+                    
                     cti_data = {
                         "bu_number": cleaned_row.get("bu_number", ""),
                         "category": cleaned_row.get("category", ""),
@@ -1323,83 +1280,62 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
                         "resolver_group": cleaned_row.get("resolver_group", ""),
                         "request_type": cleaned_row.get("request_type", ""),
                         "sla": cleaned_row.get("sla", ""),
-                        "service_description": cleaned_row.get(
-                            "service_description", ""
-                        ),
+                        "service_description": cleaned_row.get("service_description", ""),
                         "bu_description": cleaned_row.get("bu_description", ""),
-                        "resolver_group_description": cleaned_row.get(
-                            "resolver_group_description", ""
-                        ),
+                        "resolver_group_description": cleaned_row.get("resolver_group_description", ""),
                     }
 
                     required_fields = ["category", "type", "item"]
-                    missing_fields = [
-                        field for field in required_fields if not cti_data[field]
-                    ]
-
+                    missing_fields = [field for field in required_fields if not cti_data.get(field)]
                     if missing_fields:
-                        errors.append(
-                            f"Row {row_num}: Missing required fields: {', '.join(missing_fields)}"
-                        )
+                        errors.append(f"Row {row_num}: Missing required fields: {', '.join(missing_fields)}")
                         error_count += 1
                         continue
-
-                    existing = CTIRecord.objects.filter(
-                        bu_number=cti_data["bu_number"],
-                        category=cti_data["category"],
-                        type=cti_data["type"],
-                        item=cti_data["item"],
-                    ).first()
-
-                    if existing:
-                        for field, value in cti_data.items():
-                            if value:
-                                setattr(existing, field, value)
-                        existing.save()
-
-                        self._regenerate_embedding_for_record(existing)
-                        updated_count += 1
-                    else:
-                        cti_record = CTIRecord.objects.create(**cti_data)
-                        self._regenerate_embedding_for_record(cti_record)
+                    
+                    # Use update_or_create for simplicity
+                    record, created = CTIRecord.objects.update_or_create(
+                        category=cti_data['category'],
+                        type=cti_data['type'],
+                        item=cti_data['item'],
+                        defaults=cti_data
+                    )
+                    
+                    self._regenerate_embedding_for_record(record)
+                    
+                    if created:
                         created_count += 1
+                    else:
+                        updated_count += 1
 
                 except Exception as e:
                     errors.append(f"Row {row_num}: {str(e)}")
                     error_count += 1
-
-            return Response(
-                {
-                    "success": True,
-                    "created_count": created_count,
-                    "updated_count": updated_count,
-                    "error_count": error_count,
-                    "errors": errors[:10],
-                    "message": f"Import completed: {created_count} created, {updated_count} updated, {error_count} errors",
-                }
-            )
-
+            
+            return Response({
+                "success": True,
+                "created_count": created_count,
+                "updated_count": updated_count,
+                "error_count": error_count,
+                "errors": errors[:20],
+                "message": f"Import completed: {created_count} created, {updated_count} updated, {error_count} errors.",
+            })
         except Exception as e:
-            return Response(
-                {"success": False, "message": f"Import failed: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return Response({"success": False, "message": f"Import failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _regenerate_embedding_for_record(self, cti_record):
         try:
             from .ai_service import classification_service
-
             cti_text = (
                 f"{cti_record.bu_number} {cti_record.category} {cti_record.type} {cti_record.item} "
                 f"{cti_record.request_type} {cti_record.sla} {cti_record.service_description} "
                 f"{cti_record.bu_description} {cti_record.resolver_group_description}"
             )
             embedding = classification_service.get_embedding(cti_text)
-
             if embedding:
                 cti_record.embedding_vector = embedding
                 cti_record.save(update_fields=["embedding_vector"])
         except Exception:
+            # Silently fail if embedding generation fails during bulk import
             pass
 
 
