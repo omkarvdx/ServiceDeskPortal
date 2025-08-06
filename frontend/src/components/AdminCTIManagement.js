@@ -148,15 +148,37 @@ const AdminCTIManagement = ({ user }) => {
   const [editingCell, setEditingCell] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [showError, setShowError] = useState(false);
   const [showRecommendations, setShowRecommendations] = useState(true);
 
   const fetchCTIRecords = useCallback(async () => {
     try {
       setLoading(true);
-      const params = Object.fromEntries(
-        Object.entries(filters).filter(([_, value]) => value !== '')
-      );
-      const response = await APIService.request('/admin/cti/', {
+      
+      // Create params object with all filters, removing empty values
+      const params = new URLSearchParams();
+      
+      // Add all non-empty filters
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== '' && value !== null && value !== undefined) {
+          params.append(key, value);
+        }
+      });
+      
+      // Ensure page and page_size are always included
+      if (!params.has('page')) {
+        params.append('page', filters.page || 1);
+      }
+      if (!params.has('page_size')) {
+        params.append('page_size', filters.page_size || 25);
+      }
+      
+      console.log('Fetching CTI records with params:', params.toString());
+      
+      const response = await APIService.request(`/admin/cti/?${params.toString()}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -170,12 +192,19 @@ const AdminCTIManagement = ({ user }) => {
           count: response.count,
           next: response.next,
           previous: response.previous,
-          current_page: Math.ceil((params.page || 1)),
-          total_pages: Math.ceil(response.count / (params.page_size || 25))
+          current_page: Number(filters.page) || 1,
+          total_pages: Math.ceil(response.count / (filters.page_size || 25))
         });
         setStats(response.stats || {});
       } else {
+        // Fallback for non-paginated response (shouldn't happen with current backend)
         setCtiRecords(response);
+        setPagination(prev => ({
+          ...prev,
+          count: response.length,
+          current_page: 1,
+          total_pages: 1
+        }));
       }
     } catch (error) {
       console.error('Error fetching CTI records:', error);
@@ -398,66 +427,269 @@ const AdminCTIManagement = ({ user }) => {
     }
   };
 
-  const handleBulkAction = async (action, data) => {
+  const handleBulkAction = async (action, data = {}) => {
     try {
       const recordIds = Array.from(selectedRecords);
-      const response = await APIService.request('/admin/cti/bulk-actions/', {
+      if (recordIds.length === 0) {
+        alert('Please select at least one record');
+        return;
+      }
+
+      // Get CSRF token from cookie
+      const csrfToken = getCookie('csrftoken');
+      if (!csrfToken) {
+        throw new Error('CSRF token not found in cookies. Please refresh the page.');
+      }
+
+      // Prepare the request body
+      const requestBody = {
+        cti_ids: recordIds,
+        action: action,
+        ...data
+      };
+
+      console.log('Sending bulk action request:', {
+        url: 'http://localhost:8000/api/admin/cti/bulk-actions/',
         method: 'POST',
-        body: JSON.stringify({
-          cti_ids: recordIds,
-          action,
-          ...data
-        })
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+        body: JSON.stringify(requestBody)
       });
 
-      if (response.success) {
-        setSelectedRecords(new Set());
-        await fetchCTIRecords();
-        alert(response.message);
-      } else {
-        alert('Bulk action failed: ' + response.message);
+      // Make the request directly to the backend URL
+      const response = await fetch('http://localhost:8000/api/admin/cti/bulk-actions/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrfToken,
+        },
+        credentials: 'include',
+        body: JSON.stringify(requestBody)
+      });
+
+      let responseData;
+      try {
+        responseData = await response.json();
+      } catch (e) {
+        responseData = {};
       }
+
+      console.log('Bulk action response:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: responseData
+      });
+
+      if (!response.ok) {
+        // Handle specific error for records in use
+        if (response.status === 400 && responseData.detail && responseData.detail.includes('in use')) {
+          throw new Error(`Cannot delete records that are in use. ${responseData.detail}`);
+        }
+        throw new Error(responseData.detail || responseData.message || `HTTP error! status: ${response.status}`);
+      }
+
+      // Clear selection and refresh data
+      setSelectedRecords(new Set());
+      await fetchCTIRecords();
+      
+      // Show success message
+      alert(responseData.message || 'Bulk action completed successfully');
+      
     } catch (error) {
-      console.error('Error performing bulk action:', error);
-      alert('Bulk action failed');
+      console.error('Error performing bulk action:', {
+        error: error.message,
+        stack: error.stack,
+        response: error.response
+      });
+      
+      // Handle specific error cases
+      if (error.message.toLowerCase().includes('csrf') || error.message.includes('CSRF')) {
+        alert('CSRF validation failed. Please refresh the page and try again.');
+        window.location.reload();
+      } else {
+        // Show the error message from the server
+        alert(error.message || 'An error occurred during bulk action');
+      }
     }
   };
 
+  // Helper function to get cookie by name
+  const getCookie = (name) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+  };
+
+  // Ensure we have a valid CSRF token
+  const ensureCSRFToken = async () => {
+    // First try to get from meta tag
+    let csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    
+    // If not in meta tag, try to get from cookies
+    if (!csrfToken) {
+      csrfToken = getCookie('csrftoken');
+    }
+    
+    // If still not found, try to fetch it
+    if (!csrfToken) {
+      try {
+        const response = await fetch('/api/csrf/', {
+          credentials: 'include'
+        });
+        if (response.ok) {
+          const data = await response.json();
+          csrfToken = data.csrfToken;
+        }
+      } catch (e) {
+        console.error('Failed to fetch CSRF token:', e);
+      }
+    }
+    
+    if (!csrfToken) {
+      throw new Error('Failed to obtain CSRF token');
+    }
+    
+    return csrfToken;
+  };
   const handleImport = async (file, options) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('options', JSON.stringify(options));
       
-      const response = await APIService.request('/admin/cti/import-csv/', {
+      // Get CSRF token from cookie
+      const csrfToken = getCookie('csrftoken');
+      if (!csrfToken) {
+        // If no CSRF token in cookie, try to get a new one
+        await fetch('http://localhost:8000/api/csrf/', {
+          method: 'GET',
+          credentials: 'include',
+        });
+        // Try to get CSRF token again after refresh
+        const newCsrfToken = getCookie('csrftoken');
+        if (!newCsrfToken) {
+          throw new Error('CSRF token not found in cookies after refresh');
+        }
+      }
+
+      console.log('Sending import request to backend...');
+      
+      // Make the request directly to the backend URL
+      const response = await fetch('http://localhost:8000/api/admin/cti/import-csv/', {
         method: 'POST',
-        body: formData,
-        headers: {} // Let browser set content-type for FormData
+        headers: {
+          'X-CSRFToken': csrfToken || getCookie('csrftoken'),
+        },
+        credentials: 'include',
+        body: formData
       });
 
-      if (response.success) {
+      let responseData;
+      try {
+        responseData = await response.json();
+      } catch (e) {
+        responseData = {};
+      }
+
+      console.log('Import response:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: responseData
+      });
+
+      if (!response.ok) {
+        throw new Error(responseData.detail || responseData.message || `HTTP error! status: ${response.status}`);
+      }
+      
+      if (responseData.success) {
+        setSuccessMessage('CTI records imported successfully!');
+        setShowSuccess(true);
         await fetchCTIRecords();
-        return response;
       } else {
-        throw new Error(response.message);
+        throw new Error(responseData.message || 'Failed to import CTI records');
       }
     } catch (error) {
-      console.error('Error importing CTI records:', error);
-      throw error;
+      console.error('Error importing CTI records:', {
+        error: error.message,
+        stack: error.stack
+      });
+      setErrorMessage(error.message || 'Failed to import CTI records');
+      setShowError(true);
+      
+      if (error.message.toLowerCase().includes('csrf')) {
+        // If CSRF error, suggest refreshing the page
+        if (window.confirm('Your session may have expired. Would you like to refresh the page?')) {
+          window.location.reload();
+        }
+      }
     }
   };
 
-  const handleExport = () => {
-    const params = new URLSearchParams(
-      Object.fromEntries(
-        Object.entries(filters).filter(([_, value]) => value !== '')
-      )
-    );
-    window.open(`/api/admin/cti/export-csv/?${params}`, '_blank');
+  const handleExport = async () => {
+    try {
+      const params = new URLSearchParams(
+        Object.fromEntries(
+          Object.entries(filters).filter(([_, value]) => value !== '')
+        )
+      );
+      
+      // Get CSRF token for the request
+      const csrfToken = APIService.getCSRFToken();
+      
+      // Make the request to get the CSV data
+      const response = await fetch(`${APIService.baseURL}/admin/cti/export-csv/?${params}`, {
+        method: 'GET',
+        headers: {
+          'X-CSRFToken': csrfToken,
+        },
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to export CSV');
+      }
+      
+      // Get the filename from the Content-Disposition header or use a default name
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = 'cti-export.csv';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create a blob from the response and trigger download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+      
+    } catch (error) {
+      console.error('Error exporting CSV:', error);
+      alert('Failed to export CSV. Please try again.');
+    }
   };
 
-  const handlePageChange = (newPage) => {
-    setFilters({ ...filters, page: newPage });
-  };
+  const handlePageChange = useCallback((newPage) => {
+    if (newPage >= 1 && newPage <= pagination.total_pages) {
+      setFilters(prevFilters => ({
+        ...prevFilters,
+        page: newPage
+      }));
+      
+      // Scroll to top when changing pages
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [pagination.total_pages]);
 
   const getEmbeddingBadge = (hasEmbedding) => {
     return hasEmbedding ? (
@@ -850,30 +1082,97 @@ const AdminCTIManagement = ({ user }) => {
 
             {/* Pagination */}
             {pagination.total_pages > 1 && (
-              <div className="bg-gray-50 px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+              <div className="bg-gray-50 px-4 py-3 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-sm text-gray-700">
                   Showing {((pagination.current_page - 1) * filters.page_size) + 1} to{' '}
                   {Math.min(pagination.current_page * filters.page_size, pagination.count)} of{' '}
                   {pagination.count} results
                 </div>
+                
                 <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => handlePageChange(1)}
+                    disabled={pagination.current_page === 1}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+                    title="First Page"
+                  >
+                    «
+                  </button>
                   <button
                     onClick={() => handlePageChange(pagination.current_page - 1)}
                     disabled={!pagination.previous}
                     className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+                    title="Previous Page"
                   >
                     Previous
                   </button>
-                  <span className="text-sm text-gray-700">
-                    Page {pagination.current_page} of {pagination.total_pages}
-                  </span>
+                  
+                  <div className="flex items-center space-x-1">
+                    {Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
+                      // Calculate page numbers to show (current page in the middle when possible)
+                      let pageNum;
+                      if (pagination.total_pages <= 5) {
+                        pageNum = i + 1;
+                      } else if (pagination.current_page <= 3) {
+                        pageNum = i + 1;
+                      } else if (pagination.current_page >= pagination.total_pages - 2) {
+                        pageNum = pagination.total_pages - 4 + i;
+                      } else {
+                        pageNum = pagination.current_page - 2 + i;
+                      }
+                      
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => handlePageChange(pageNum)}
+                          className={`w-8 h-8 flex items-center justify-center rounded text-sm ${
+                            pagination.current_page === pageNum
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'border border-gray-300 hover:bg-gray-100'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  
                   <button
                     onClick={() => handlePageChange(pagination.current_page + 1)}
                     disabled={!pagination.next}
                     className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+                    title="Next Page"
                   >
                     Next
                   </button>
+                  <button
+                    onClick={() => handlePageChange(pagination.total_pages)}
+                    disabled={pagination.current_page === pagination.total_pages}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+                    title="Last Page"
+                  >
+                    »
+                  </button>
+                </div>
+                
+                <div className="flex items-center text-sm text-gray-700">
+                  <span className="mr-2">Page Size:</span>
+                  <select
+                    value={filters.page_size}
+                    onChange={(e) => {
+                      setFilters(prev => ({
+                        ...prev,
+                        page_size: Number(e.target.value),
+                        page: 1 // Reset to first page when changing page size
+                      }));
+                    }}
+                    className="border border-gray-300 rounded px-2 py-1 text-sm"
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
                 </div>
               </div>
             )}

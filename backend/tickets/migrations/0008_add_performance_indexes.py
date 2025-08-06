@@ -10,10 +10,9 @@ class Migration(migrations.Migration):
             "CREATE INDEX IF NOT EXISTS tickets_ticket_prediction_confidence_idx ON tickets_ticket(prediction_confidence);",
             reverse_sql="DROP INDEX IF EXISTS tickets_ticket_prediction_confidence_idx;"
         ),
-        # Using a regular index on the timestamp field instead of date function
         migrations.RunSQL(
-            "CREATE INDEX IF NOT EXISTS tickets_ticket_created_at_idx ON tickets_ticket(created_at);",
-            reverse_sql="DROP INDEX IF EXISTS tickets_ticket_created_at_idx;"
+            "CREATE INDEX IF NOT EXISTS tickets_ticket_created_date_idx ON tickets_ticket(date(created_at));",
+            reverse_sql="DROP INDEX IF EXISTS tickets_ticket_created_date_idx;"
         ),
         migrations.RunSQL(
             "CREATE INDEX IF NOT EXISTS tickets_ctirecord_usage_idx ON tickets_ctirecord(id) WHERE embedding_vector IS NOT NULL;",
