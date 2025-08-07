@@ -64,8 +64,8 @@ const CTITrainingExamplesSection = ({ ctiRecord }) => {
   const fetchTrainingExamples = async () => {
     setLoading(true);
     try {
-      const data = await APIService.request(`/cti/${ctiRecord.id}/training-examples/`);
-      setExamples(data.training_examples);
+      const response = await APIService.request(`/api/admin/cti/${ctiRecord.id}/training-examples/`);
+      setExamples(response.data.training_examples || []);
     } catch (error) {
       console.error('Error fetching training examples:', error);
     } finally {
@@ -178,12 +178,7 @@ const AdminCTIManagement = ({ user }) => {
       
       console.log('Fetching CTI records with params:', params.toString());
       
-      const response = await APIService.request(`/admin/cti/?${params.toString()}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
+      const response = await APIService.request(`/api/admin/cti/?${params.toString()}`);
       
       // Handle paginated response
       if (response.results) {
@@ -222,7 +217,7 @@ const AdminCTIManagement = ({ user }) => {
 
   const fetchFilterOptions = async () => {
     try {
-      const options = await APIService.request('/admin/cti/filter-options/');
+      const options = await APIService.request('/api/admin/cti/filter-options/');
       setFilterOptions(options);
     } catch (error) {
       console.error('Error fetching filter options:', error);
@@ -399,7 +394,7 @@ const AdminCTIManagement = ({ user }) => {
     }
 
     try {
-      await APIService.request(`/admin/cti/${recordId}/`, {
+      await APIService.request(`/api/admin/cti/${recordId}/`, {
         method: 'DELETE'
       });
       await fetchCTIRecords();
@@ -411,7 +406,7 @@ const AdminCTIManagement = ({ user }) => {
 
   const handleRegenerateEmbedding = async (recordId) => {
     try {
-      const response = await APIService.request(`/admin/cti/${recordId}/regenerate-embedding/`, {
+      const response = await APIService.request(`/api/admin/cti/${recordId}/regenerate-embedding/`, {
         method: 'POST'
       });
       
@@ -437,33 +432,19 @@ const AdminCTIManagement = ({ user }) => {
 
       // Get CSRF token from cookie
       const csrfToken = getCookie('csrftoken');
-      if (!csrfToken) {
-        throw new Error('CSRF token not found in cookies. Please refresh the page.');
-      }
-
-      // Prepare the request body
       const requestBody = {
-        cti_ids: recordIds,
         action: action,
-        ...data
+        cti_ids: Array.from(recordIds)  // Backend expects 'cti_ids' instead of 'ids'
       };
 
-      console.log('Sending bulk action request:', {
-        url: 'http://localhost:8000/api/admin/cti/bulk-actions/',
+      console.log('Sending bulk action request:', requestBody);
+      
+      // Use the base URL from APIService with the correct endpoint
+      const response = await fetch(`${APIService.baseURL}/api/admin/cti/bulk-actions/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      // Make the request directly to the backend URL
-      const response = await fetch('http://localhost:8000/api/admin/cti/bulk-actions/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
+          'X-CSRFToken': await ensureCSRFToken()
         },
         credentials: 'include',
         body: JSON.stringify(requestBody)
@@ -473,30 +454,53 @@ const AdminCTIManagement = ({ user }) => {
       try {
         responseData = await response.json();
       } catch (e) {
-        responseData = {};
+        console.error('Failed to parse response:', e);
+        responseData = { message: 'Invalid server response' };
       }
 
-      console.log('Bulk action response:', {
+      const responseInfo = {
         status: response.status,
         statusText: response.statusText,
         data: responseData
-      });
+      };
+      
+      console.log('Bulk action response:', responseInfo);
 
       if (!response.ok) {
         // Handle specific error for records in use
-        if (response.status === 400 && responseData.detail && responseData.detail.includes('in use')) {
-          throw new Error(`Cannot delete records that are in use. ${responseData.detail}`);
+        if (response.status === 400 && responseData.detail) {
+          if (responseData.detail.includes('in use')) {
+            throw new Error(`Cannot delete records that are in use. ${responseData.detail}`);
+          }
+          // Handle other 400 errors
+          throw new Error(responseData.detail);
+        } else if (response.status === 403) {
+          throw new Error('You do not have permission to perform this action');
+        } else if (response.status === 404) {
+          throw new Error('The requested resource was not found');
+        } else {
+          throw new Error(responseData.message || `HTTP error! status: ${response.status}`);
         }
-        throw new Error(responseData.detail || responseData.message || `HTTP error! status: ${response.status}`);
       }
 
-      // Clear selection and refresh data
-      setSelectedRecords(new Set());
-      await fetchCTIRecords();
-      
-      // Show success message
-      alert(responseData.message || 'Bulk action completed successfully');
-      
+      // Process the response
+      if (response.ok) {
+        // Clear selection and refresh data
+        setSelectedRecords(new Set());
+        await fetchCTIRecords();
+        
+        // Handle response with warnings about skipped records
+        if (responseData.warning) {
+          setWarningMessage(
+            `${responseData.message}. ${responseData.warning} (IDs: ${responseData.used_record_ids.join(', ')})`
+          );
+          setShowWarning(true);
+        } else {
+          // Show success message
+          setSuccessMessage(responseData.message || 'Bulk action completed successfully');
+          setShowSuccess(true);
+        }
+      }
     } catch (error) {
       console.error('Error performing bulk action:', {
         error: error.message,
@@ -504,14 +508,17 @@ const AdminCTIManagement = ({ user }) => {
         response: error.response
       });
       
+      // Set error message in state
+      setErrorMessage(error.message || 'An error occurred during bulk action');
+      setShowError(true);
+      
       // Handle specific error cases
       if (error.message.toLowerCase().includes('csrf') || error.message.includes('CSRF')) {
-        alert('CSRF validation failed. Please refresh the page and try again.');
-        window.location.reload();
-      } else {
-        // Show the error message from the server
-        alert(error.message || 'An error occurred during bulk action');
+        setErrorMessage('Your session has expired. Please refresh the page and try again.');
+        setShowError(true);
       }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -554,62 +561,117 @@ const AdminCTIManagement = ({ user }) => {
     
     return csrfToken;
   };
+  const [importProgress, setImportProgress] = useState(0);
+  const [importing, setImporting] = useState(false);
+  const [importResults, setImportResults] = useState(null);
+  const [warningMessage, setWarningMessage] = useState('');
+  const [showWarning, setShowWarning] = useState(false);
+
   const handleImport = async (file, options) => {
+    setImporting(true);
+    setImportProgress(0);
+    setImportResults(null);
+    
     try {
+      // Validate file type
+      if (!file.name.toLowerCase().endsWith('.csv')) {
+        throw new Error('Please upload a valid CSV file');
+      }
+
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('options', JSON.stringify(options));
+      formData.append('options', JSON.stringify({
+        ...options,
+        strict: true, // Enable strict mode for better error reporting
+        validate: true // Enable server-side validation
+      }));
       
-      // Get CSRF token from cookie
-      const csrfToken = getCookie('csrftoken');
-      if (!csrfToken) {
-        // If no CSRF token in cookie, try to get a new one
-        await fetch('http://localhost:8000/api/csrf/', {
-          method: 'GET',
-          credentials: 'include',
+      // Get CSRF token
+      const csrfToken = await ensureCSRFToken();
+      
+      console.log('Starting CSV import...');
+      
+      // Track upload progress
+      const xhr = new XMLHttpRequest();
+      
+      // Create a promise to handle the XHR request
+      const uploadPromise = new Promise((resolve, reject) => {
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = Math.round((event.loaded / event.total) * 100);
+            setImportProgress(percentComplete);
+          }
         });
-        // Try to get CSRF token again after refresh
-        const newCsrfToken = getCookie('csrftoken');
-        if (!newCsrfToken) {
-          throw new Error('CSRF token not found in cookies after refresh');
-        }
-      }
 
-      console.log('Sending import request to backend...');
-      
-      // Make the request directly to the backend URL
-      const response = await fetch('http://localhost:8000/api/admin/cti/import-csv/', {
-        method: 'POST',
-        headers: {
-          'X-CSRFToken': csrfToken || getCookie('csrftoken'),
-        },
-        credentials: 'include',
-        body: formData
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const responseData = JSON.parse(xhr.responseText);
+              resolve(responseData);
+            } catch (e) {
+              reject(new Error('Invalid server response'));
+            }
+          } else {
+            let errorMessage = `Import failed with status ${xhr.status}`;
+            try {
+              const errorData = JSON.parse(xhr.responseText);
+              errorMessage = errorData.detail || errorData.message || errorMessage;
+            } catch (e) {
+              // Couldn't parse error response
+            }
+            reject(new Error(errorMessage));
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          reject(new Error('Network error during import'));
+        });
+
+        xhr.addEventListener('abort', () => {
+          reject(new Error('Import was cancelled'));
+        });
       });
 
-      let responseData;
-      try {
-        responseData = await response.json();
-      } catch (e) {
-        responseData = {};
-      }
+      // Open and send the request with the correct base URL
+      xhr.open('POST', `${APIService.baseURL}/api/admin/cti/import-csv/`);
+      xhr.setRequestHeader('X-CSRFToken', csrfToken);
+      xhr.withCredentials = true; // Important for sending cookies with CORS
+      xhr.send(formData);
 
-      console.log('Import response:', {
-        status: response.status,
-        statusText: response.statusText,
-        data: responseData
-      });
-
-      if (!response.ok) {
-        throw new Error(responseData.detail || responseData.message || `HTTP error! status: ${response.status}`);
-      }
+      // Wait for the upload to complete
+      const responseData = await uploadPromise;
       
+      console.log('Import completed:', responseData);
+      setImportResults(responseData);
+
+      // Process the response
       if (responseData.success) {
-        setSuccessMessage('CTI records imported successfully!');
-        setShowSuccess(true);
+        let successMessage = `Successfully imported ${responseData.created_count || 0} records`;
+        
+        if (responseData.updated_count) {
+          successMessage += `, updated ${responseData.updated_count} records`;
+        }
+        
+        if (responseData.error_count > 0) {
+          // Show detailed error information
+          const errorDetails = (responseData.errors || []).map((error, index) => 
+            `• ${error}`
+          ).join('\n');
+          
+          setSuccessMessage(successMessage);
+          setWarningMessage(
+            `Import completed with ${responseData.error_count} error(s):\n\n${errorDetails}`
+          );
+          setShowWarning(true);
+        } else {
+          setSuccessMessage(successMessage);
+          setShowSuccess(true);
+        }
+        
+        // Refresh the records
         await fetchCTIRecords();
       } else {
-        throw new Error(responseData.message || 'Failed to import CTI records');
+        throw new Error(responseData.message || 'Import failed');
       }
     } catch (error) {
       console.error('Error importing CTI records:', {
@@ -640,7 +702,7 @@ const AdminCTIManagement = ({ user }) => {
       const csrfToken = APIService.getCSRFToken();
       
       // Make the request to get the CSV data
-      const response = await fetch(`${APIService.baseURL}/admin/cti/export-csv/?${params}`, {
+      const response = await fetch(`${APIService.baseURL}/api/admin/cti/export-csv/?${params}`, {
         method: 'GET',
         headers: {
           'X-CSRFToken': csrfToken,

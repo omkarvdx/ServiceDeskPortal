@@ -213,6 +213,28 @@ class TicketUpdateSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         from .ai_service import classification_service
         from django.utils import timezone
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Log the incoming data for debugging
+        logger.info(f"Updating ticket {instance.id} with data: {validated_data}")
+
+        # Handle case-insensitive status updates
+        if 'status' in validated_data:
+            status_value = validated_data['status'].lower()
+            # Map common status variations to valid choices
+            status_mapping = {
+                'closed': 'closed',
+                'close': 'closed',
+                'resolved': 'resolved',
+                'resolve': 'resolved',
+                'in progress': 'in_progress',
+                'in_progress': 'in_progress',
+                'open': 'open',
+                'reopen': 'open',
+                're-open': 'open'
+            }
+            validated_data['status'] = status_mapping.get(status_value, status_value)
 
         corrected_cti_id = validated_data.pop('corrected_cti_id', None)
         correction_notes = validated_data.pop('correction_notes', '')

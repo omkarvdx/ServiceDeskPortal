@@ -22,14 +22,24 @@ const Dashboard = ({ user, onLogout }) => {
     }
     return 'tickets';
   });
+  // Centralized state management
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [filters, setFilters] = useState({ classification: '', search: '' });
   const [refreshing, setRefreshing] = useState(false);
+
+  // State for filters, sorting, and pagination
+  const [filters, setFilters] = useState({ 
+    classification: '', 
+    search: '' 
+  });
+  const [sortConfig, setSortConfig] = useState({
+    key: 'created_at',
+    direction: 'desc'
+  });
   const [pagination, setPagination] = useState({
     currentPage: 1,
     pageSize: 10,
@@ -87,56 +97,130 @@ const Dashboard = ({ user, onLogout }) => {
     }
   };
 
-  const fetchTickets = useCallback(async (page = 1) => {
+  // Centralized data fetching with all parameters
+  const fetchTickets = useCallback(async (page = 1, newPageSize = null, newFilters = null, newSortConfig = null) => {
     try {
       setLoading(true);
-      console.log('Fetching tickets with filters:', filters, 'page:', page);
-      const response = await APIService.getTickets(filters, page, pagination.pageSize);
-      console.log('Received tickets data:', response);
+      const pageSize = newPageSize || pagination.pageSize;
+      const currentFilters = newFilters || filters;
+      const currentSort = newSortConfig || sortConfig;
+      
+      console.log('Fetching tickets with:', { 
+        filters: currentFilters, 
+        page, 
+        pageSize, 
+        sort: currentSort 
+      });
+      
+      // Call API with all parameters
+      const response = await APIService.getTickets(
+        currentFilters, 
+        page, 
+        pageSize,
+        currentSort.key,
+        currentSort.direction
+      );
+      
+      console.log('API Response:', response);
       
       // Update tickets and pagination state
       setTickets(Array.isArray(response.results) ? response.results : []);
-      
       setPagination(prev => ({
         ...prev,
         currentPage: page,
+        pageSize,
         totalItems: response.count || 0,
-        totalPages: Math.ceil((response.count || 0) / pagination.pageSize),
+        totalPages: Math.ceil((response.count || 0) / pageSize),
         hasNext: !!response.next,
         hasPrevious: !!response.previous
       }));
       
+      return response;
     } catch (error) {
       console.error('Error fetching tickets:', error);
-      console.error('Error details:', {
-        message: error.message,
-        stack: error.stack,
-        response: error.response
-      });
+      setTickets([]);
+      setPagination(prev => ({
+        ...prev,
+        currentPage: 1,
+        totalItems: 0,
+        totalPages: 1,
+        hasNext: false,
+        hasPrevious: false
+      }));
+      return { results: [], count: 0 };
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [filters, pagination.pageSize]);
-
+  }, [filters, pagination.pageSize, sortConfig]);
+  
+  // Effect to fetch tickets when filters, sort, or pagination changes
   useEffect(() => {
     if (activeTab === 'tickets') {
-      fetchTickets();
+      fetchTickets(pagination.currentPage, pagination.pageSize, filters, sortConfig);
     }
-  }, [filters, activeTab, fetchTickets]);
-
+  }, [activeTab, fetchTickets, pagination.currentPage, pagination.pageSize, filters, sortConfig]);
+  
+  // Handler for page changes
+  const handlePageChange = useCallback((newPage) => {
+    if (newPage >= 1 && newPage <= pagination.totalPages) {
+      setPagination(prev => ({
+        ...prev,
+        currentPage: newPage
+      }));
+    }
+  }, [pagination.totalPages]);
+  
+  // Handler for page size changes
+  const handlePageSizeChange = useCallback((newPageSize) => {
+    const pageSize = parseInt(newPageSize, 10);
+    setPagination(prev => ({
+      ...prev,
+      pageSize,
+      currentPage: 1 // Reset to first page when changing page size
+    }));
+  }, []);
+  
+  // Handler for filter changes
+  const handleFilterChange = useCallback((newFilters) => {
+    setFilters(newFilters);
+    setPagination(prev => ({
+      ...prev,
+      currentPage: 1 // Reset to first page when filters change
+    }));
+  }, []);
+  
+  // Handler for sort changes
+  const handleSortChange = useCallback((sortKey) => {
+    setSortConfig(prev => ({
+      key: sortKey,
+      direction: prev.key === sortKey && prev.direction === 'asc' ? 'desc' : 'asc'
+    }));
+  }, []);
+  
+  // Handler for manual refresh
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    // Reset to first page when refreshing
-    setPagination(prev => ({ ...prev, currentPage: 1 }));
-    fetchTickets(1).finally(() => setRefreshing(false));
-  }, [fetchTickets]);
+    fetchTickets(pagination.currentPage, pagination.pageSize, filters, sortConfig);
+  }, [fetchTickets, pagination.currentPage, pagination.pageSize, filters, sortConfig]);
 
-  // Update filters and reset to first page
-  const updateFilters = useCallback((newFilters) => {
-    setFilters(newFilters);
-    // Reset to first page when filters change
-    setPagination(prev => ({ ...prev, currentPage: 1 }));
-  }, []);
+  const handleDeleteTicket = async (ticketId) => {
+    if (window.confirm('Are you sure you want to delete this ticket? This action cannot be undone.')) {
+      try {
+        // Use the dedicated delete endpoint
+        await APIService.deleteTicket(ticketId);
+        // Refresh the ticket list
+        fetchTickets(pagination.currentPage);
+        alert('Ticket deleted successfully');
+      } catch (error) {
+        console.error('Error deleting ticket:', error);
+        const errorMessage = error.message || 'Failed to delete ticket. Please try again.';
+        alert(errorMessage);
+      }
+    }
+  };
+
+  const updateFilters = handleFilterChange;
 
   const handleTicketImport = async (file) => {
     try {
@@ -422,49 +506,27 @@ const Dashboard = ({ user, onLogout }) => {
 
             {/* Status Overview Cards - Removed as per user request */}
 
-            {/* Filters */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
-              <div className="flex items-center space-x-4">
-                <div className="flex-1">
-                  <div className="relative">
-                    <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="text"
-                      placeholder="Search tickets by ID, summary, or description..."
-                      value={filters.search}
-                      onChange={(e) => updateFilters({ ...filters, search: e.target.value })}
-                      onKeyPress={(e) => e.key === 'Enter' && fetchTickets(1)}
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Filter className="w-5 h-5 text-gray-400" />
-                  <select
-                    value={filters.classification || ''}
-                    onChange={(e) => updateFilters({ ...filters, classification: e.target.value })}
-                    className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">All</option>
-                    <option value="unclassified">Unclassified</option>
-                    <option value="corrected">Classified</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Tickets List */}
+            {/* Render TicketList */}
             <TicketList
               tickets={tickets}
               onTicketClick={handleTicketClick}
               userRole={user.role}
               loading={loading}
+              onImportComplete={handleRefresh}
               pagination={{
                 currentPage: pagination.currentPage,
+                pageSize: pagination.pageSize,
                 totalPages: pagination.totalPages,
                 totalItems: pagination.totalItems
               }}
-              onPageChange={(page) => fetchTickets(page)}
+              onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
+              onFilterChange={handleFilterChange}
+              onSortChange={handleSortChange}
+              onRefresh={handleRefresh}
+              onDeleteTicket={handleDeleteTicket}
+              filters={filters}
+              sortConfig={sortConfig}
             />
           </div>
         );

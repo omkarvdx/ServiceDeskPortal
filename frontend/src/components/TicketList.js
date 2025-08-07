@@ -14,7 +14,8 @@ import {
   Eye,
   Search,
   Download,
-  Upload
+  Upload,
+  Trash2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -194,8 +195,8 @@ const JustificationCell = ({ justification }) => {
 };
 
 const SortableHeader = ({ children, sortKey, currentSort, onSort }) => {
-  const isSorted = currentSort.key === sortKey;
-  const direction = isSorted ? currentSort.direction : null;
+  const isSorted = currentSort?.key === sortKey;
+  const direction = isSorted ? currentSort?.direction : null;
 
   return (
     <TableHead 
@@ -222,7 +223,7 @@ const SortableHeader = ({ children, sortKey, currentSort, onSort }) => {
 };
 
 // Pagination component
-const Pagination = ({ currentPage, totalPages, onPageChange }) => {
+const Pagination = ({ currentPage, totalPages, totalItems, pageSize = 10, onPageChange, onPageSizeChange }) => {
   const getPageNumbers = () => {
     const pages = [];
     const maxVisiblePages = 5; // Show max 5 page numbers at a time
@@ -287,14 +288,27 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
         </button>
       </div>
       <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-        <div>
+        <div className="flex items-center space-x-4">
           <p className="text-sm text-gray-700">
-            Showing <span className="font-medium">{(currentPage - 1) * 10 + 1}</span> to{' '}
+            Showing <span className="font-medium">{(currentPage - 1) * pageSize + 1}</span> to{' '}
             <span className="font-medium">
-              {Math.min(currentPage * 10, totalPages * 10)}
+              {Math.min(currentPage * pageSize, totalItems)}
             </span>{' '}
-            of <span className="font-medium">{totalPages * 10}</span> results
+            of <span className="font-medium">{totalItems}</span> results
           </p>
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-700">Show:</span>
+            <select 
+              value={pageSize}
+              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+              className="border border-gray-300 rounded-md py-1 px-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
         </div>
         <div>
           <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
@@ -362,16 +376,28 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
 };
 
 const TicketList = ({ 
-  tickets, 
+  tickets = [], 
   onTicketClick, 
   userRole, 
-  loading, 
+  loading = false, 
   onImportComplete, 
-  pagination = { currentPage: 1, totalPages: 1, totalItems: 0 },
-  onPageChange = () => {}
+  pagination = { currentPage: 1, pageSize: 10, totalPages: 1, totalItems: 0 },
+  onPageChange = () => {},
+  onPageSizeChange = () => {},
+  onFilterChange = () => {},
+  onSortChange = () => {},
+  onRefresh = () => {},
+  onDeleteTicket = () => {},
+  filters = {},
+  sortConfig = {}
 }) => {
   const fileInputRef = useRef(null);
   
+  // Use the tickets prop directly since filtering and sorting is now handled by the parent
+  const filteredAndSortedTickets = useMemo(() => {
+    return tickets || [];
+  }, [tickets]);
+
   const exportToCSV = () => {
     try {
       // Prepare the data for export
@@ -379,6 +405,7 @@ const TicketList = ({
         'Ticket ID': ticket.ticket_id,
         'Summary': ticket.summary || '',
         'Description': ticket.description || '',
+        'BU Number': ticket.final_cti?.bu_number || '',
         'Status': ticket.status || '',
         'Created At': ticket.created_at ? new Date(ticket.created_at).toLocaleString() : '',
         'Category': ticket.final_cti?.category || '',
@@ -433,91 +460,27 @@ const TicketList = ({
       
       // Reset the file input
       e.target.value = null;
-      
     } catch (error) {
       console.error('Error importing file:', error);
       alert('Failed to import file. Please check the file format and try again.');
     }
   };
-  const [sortConfig, setSortConfig] = useState({ key: null, direction: null });
-  const [filters, setFilters] = useState({
-    search: '',
-    category: '',
-    type: '',
-    status: ''
-  });
 
-  const handleSort = (key) => {
-    let direction = 'asc';
-    if (sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
-    }
-    setSortConfig({ key, direction });
+  const handleFilterChange = (e) => {
+    const { name, value } = e.target;
+    onFilterChange({
+      ...filters,
+      [name]: value
+    });
   };
 
-  const filteredAndSortedTickets = useMemo(() => {
-    let filtered = tickets.filter(ticket => {
-      const matchesSearch = !filters.search || 
-        ticket.summary?.toLowerCase().includes(filters.search.toLowerCase()) ||
-        ticket.description?.toLowerCase().includes(filters.search.toLowerCase()) ||
-        ticket.ticket_id?.toLowerCase().includes(filters.search.toLowerCase());
-      
-      const matchesCategory = !filters.category || 
-        ticket.final_cti?.category === filters.category;
-      
-      const matchesType = !filters.type || 
-        ticket.final_cti?.type === filters.type;
-      
-      const matchesStatus = !filters.status || 
-        ticket.status === filters.status;
-
-      return matchesSearch && matchesCategory && matchesType && matchesStatus;
-    });
-
-    if (sortConfig.key) {
-      filtered.sort((a, b) => {
-        let aValue = a[sortConfig.key];
-        let bValue = b[sortConfig.key];
-
-        // Handle nested properties
-        if (sortConfig.key.includes('.')) {
-          const keys = sortConfig.key.split('.');
-          aValue = keys.reduce((obj, key) => obj?.[key], a);
-          bValue = keys.reduce((obj, key) => obj?.[key], b);
-        }
-
-        // Special handling for ticket_id to sort numerically
-        if (sortConfig.key === 'ticket_id' && aValue && bValue) {
-          // Extract numeric part from ticket_id (e.g., 'TKT-000153' -> 153)
-          const getNumericPart = (id) => {
-            const match = id.match(/\d+/);
-            return match ? parseInt(match[0], 10) : 0;
-          };
-          
-          const aNum = getNumericPart(aValue);
-          const bNum = getNumericPart(bValue);
-          
-          return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
-        }
-
-        // Default string comparison for other fields
-        if (aValue === null || aValue === undefined) return sortConfig.direction === 'asc' ? -1 : 1;
-        if (bValue === null || bValue === undefined) return sortConfig.direction === 'asc' ? 1 : -1;
-        
-        aValue = String(aValue).toLowerCase();
-        bValue = String(bValue).toLowerCase();
-        
-        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-        return 0;
-      });
-    }
-
-    return filtered;
-  }, [tickets, filters, sortConfig]);
-
   const clearFilters = () => {
-    setFilters({ search: '', category: '', type: '', status: '' });
+    onFilterChange({
+      search: '',
+      status: '',
+      classification: '',
+      dateRange: ''
+    });
   };
 
   if (loading) {
@@ -537,7 +500,7 @@ const TicketList = ({
         </div>
         <h3 className="text-lg font-medium mb-2">No tickets found</h3>
         <p className="text-gray-500">
-          {userRole === USER_ROLES.END_USER 
+          {userRole === 'END_USER'
             ? "You haven't created any tickets yet. Click 'New Ticket' to get started."
             : "No tickets match your current filters."}
         </p>
@@ -556,30 +519,34 @@ const TicketList = ({
               <Input
                 placeholder="Search tickets..."
                 value={filters.search}
-                onChange={(e) => setFilters({...filters, search: e.target.value})}
+                onChange={handleFilterChange}
+                name="search"
                 className="w-64"
               />
             </div>
             <Input
               placeholder="Filter by category"
               value={filters.category}
-              onChange={(e) => setFilters(prev => ({ ...prev, category: e.target.value }))}
+              onChange={handleFilterChange}
+              name="category"
               className="w-48"
             />
             <Input
               placeholder="Filter by type"
               value={filters.type}
-              onChange={(e) => setFilters(prev => ({ ...prev, type: e.target.value }))}
+              onChange={handleFilterChange}
+              name="type"
               className="w-48"
             />
             <Input
               placeholder="Filter by status"
               value={filters.status}
-              onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
+              onChange={handleFilterChange}
+              name="status"
               className="w-48"
             />
           </div>
-          {Object.values(filters).some(filter => filter) && (
+          {Object.values(filters).some((filter) => filter) && (
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={clearFilters}>
                 <X className="w-3 h-3 mr-1" />
@@ -595,22 +562,46 @@ const TicketList = ({
         <div className="p-4 border-b">
           <h2 className="text-lg font-medium">All Tickets ({filteredAndSortedTickets.length})</h2>
         </div>
-        
+
         <div className="p-4">
           <Table>
             <TableHeader>
               <TableRow>
-                <SortableHeader sortKey="ticket_id" currentSort={sortConfig} onSort={handleSort}>
+                <SortableHeader
+                  sortKey="ticket_id"
+                  currentSort={sortConfig}
+                  onSort={(key) => onSortChange(key)}
+                >
                   Ticket ID
                 </SortableHeader>
-                <SortableHeader sortKey="summary" currentSort={sortConfig} onSort={handleSort}>
+                <SortableHeader
+                  sortKey="summary"
+                  currentSort={sortConfig}
+                  onSort={(key) => onSortChange(key)}
+                >
                   Summary
                 </SortableHeader>
                 <TableHead>Description</TableHead>
-                <SortableHeader sortKey="final_cti.category" currentSort={sortConfig} onSort={handleSort}>
+                <SortableHeader
+                  sortKey="final_cti.bu_number"
+                  currentSort={sortConfig}
+                  onSort={(key) => onSortChange(key)}
+                >
+                  BU Number
+                </SortableHeader>
+                <SortableHeader
+                  sortKey="final_cti.category"
+                  currentSort={sortConfig}
+                  onSort={(key) => onSortChange(key)}
+                >
                   Category
                 </SortableHeader>
-                <SortableHeader sortKey="final_cti.type" currentSort={sortConfig} onSort={handleSort}>
+
+                <SortableHeader
+                  sortKey="final_cti.type"
+                  currentSort={sortConfig}
+                  onSort={(key) => onSortChange(key)}
+                >
                   Type
                 </SortableHeader>
                 <TableHead>Item</TableHead>
@@ -618,6 +609,7 @@ const TicketList = ({
                 <TableHead>Request Type</TableHead>
                 <TableHead>SLA</TableHead>
                 <TableHead>Justification</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -638,6 +630,7 @@ const TicketList = ({
                       {ticket.description}
                     </div>
                   </TableCell>
+                  <TableCell>{ticket.final_cti?.bu_number || '-'}</TableCell>
                   <TableCell>{ticket.final_cti?.category || '-'}</TableCell>
                   <TableCell>{ticket.final_cti?.type || '-'}</TableCell>
                   <TableCell>{ticket.final_cti?.item || '-'}</TableCell>
@@ -649,17 +642,32 @@ const TicketList = ({
                       <JustificationCell justification={ticket.prediction_justification} />
                     </div>
                   </TableCell>
+                  <TableCell>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteTicket(ticket.id);
+                      }}
+                      className="text-red-600 hover:text-red-800 p-1 rounded-full hover:bg-red-50"
+                      title="Delete Ticket"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-          
+
           {/* Pagination */}
           <div className="px-6 py-4 border-t">
-            <Pagination 
+            <Pagination
               currentPage={pagination.currentPage}
               totalPages={pagination.totalPages}
+              totalItems={pagination.totalItems}
+              pageSize={pagination.pageSize}
               onPageChange={onPageChange}
+              onPageSizeChange={onPageSizeChange}
             />
           </div>
         </div>

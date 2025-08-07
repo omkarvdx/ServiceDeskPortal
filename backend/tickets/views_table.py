@@ -29,7 +29,8 @@ class TicketTableViewSet(viewsets.ModelViewSet):
     search_fields = ['ticket_id', 'summary', 'description']
     ordering_fields = ['created_at', 'updated_at', 'status', 'ticket_id']
     ordering = ['-created_at']
-    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
+    # Allow POST for bulk actions
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
         queryset = Ticket.objects.select_related(
