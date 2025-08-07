@@ -20,11 +20,11 @@ urlpatterns = [
     path("auth/csrf/", views.csrf_token_view, name="csrf_token"),
     # Ticket endpoints
     path("tickets/", views.TicketListView.as_view(), name="ticket_list"),
-    # path("tickets/", views.TicketListView.as_view(), name="ticket_list"),
     path("tickets/export/", views.TicketExportView.as_view(), name="ticket_export"),
     path("tickets/create/", views.TicketCreateView.as_view(), name="ticket_create"),
     path("tickets/bulk-upload/", views.BulkTicketUploadView.as_view(), name="ticket_bulk_upload"),
     path("tickets/<int:pk>/", views.TicketDetailView.as_view(), name="ticket_detail"),
+    path("tickets/<int:pk>/delete/", views.TicketDeleteView.as_view(), name="ticket_delete"),
     # Ticket Queue endpoints (NEW)
     path(
         "queue/", views.TicketQueueViewSet.as_view({"get": "list"}), name="ticket_queue"
@@ -47,6 +47,7 @@ urlpatterns = [
     path("queue/filters/", views.queue_filters, name="queue_filters"),
     # CTI and admin endpoints
     path("cti/", views.CTIRecordListView.as_view(), name="cti_list_readonly"),
+    path("cti/<int:pk>/", views.CTIRecordDetailView.as_view(), name="cti_detail"),
     path(
         "admin/precompute-embeddings/",
         views.precompute_embeddings,

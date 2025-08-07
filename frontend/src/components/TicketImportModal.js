@@ -54,7 +54,7 @@ const TicketImportModal = ({ isOpen, onClose, onImport }) => {
   };
 
   const downloadTemplate = () => {
-    const csvContent = `summary,description\nPrinter not working,Unable to print\nSoftware install request,Need Photoshop`;
+    const csvContent = `summary,description,created_by\nPrinter not working,Unable to print,admin\nSoftware install request,Need Photoshop,admin`;
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');

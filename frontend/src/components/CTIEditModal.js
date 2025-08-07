@@ -91,7 +91,7 @@ const CTIEditModal = ({ isOpen, onClose, record, onSuccess, filterOptions }) => 
     setError('');
 
     try {
-      const endpoint = record ? `/admin/cti/${record.id}/` : '/admin/cti/';
+      const endpoint = record ? `/api/admin/cti/${record.id}/` : '/api/admin/cti/';
       const method = record ? 'PUT' : 'POST';
 
       await APIService.request(endpoint, {

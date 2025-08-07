@@ -1,6 +1,6 @@
 // API Service for backend communication
 class APIService {
-  static baseURL = (process.env.REACT_APP_API_URL || 'http://localhost:8000') + '/api';
+  static baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
   // Try to obtain CSRF token from meta tag first and fall back to cookie
   static getCSRFToken() {
@@ -78,7 +78,7 @@ class APIService {
   // Fetch CSRF token from backend explicitly
   static async fetchCSRFToken() {
     try {
-      const response = await fetch(`${this.baseURL}/auth/csrf/`, {
+      const response = await fetch(`${this.baseURL}/api/auth/csrf/`, {
         credentials: 'include',
       });
       if (response.ok) {
@@ -93,23 +93,29 @@ class APIService {
 
   // Authentication methods
   static async login(credentials) {
-    return this.request('/auth/login/', {
+    return this.request('/api/auth/login/', {
       method: 'POST',
       body: JSON.stringify(credentials),
     });
   }
 
   static async logout() {
-    return this.request('/auth/logout/', { method: 'POST' });
+    return this.request('/api/auth/logout/', { method: 'POST' });
   }
 
   static async getCurrentUser() {
-    return this.request('/auth/user/');
+    return this.request('/api/auth/user/');
   }
 
   // Ticket methods
+  /**
+   * Delete a ticket by ID
+   * @param {number} id - The ID of the ticket to delete
+   * @returns {Promise<Object>} Response from the server
+   * @description Deletes a ticket. Only admins can delete any ticket, regular users can only delete their own tickets.
+   */
   static async deleteTicket(id) {
-    return this.request(`/tickets/${id}/`, {
+    return this.request(`/api/tickets/${id}/delete/`, {
       method: 'DELETE',
     });
   }
@@ -144,7 +150,7 @@ class APIService {
     });
     
     try {
-      const response = await this.request(`/tickets/?${params.toString()}`);
+      const response = await this.request(`/api/tickets/?${params.toString()}`);
       
       // Handle both paginated and non-paginated responses
       const paginatedResponse = {
@@ -176,7 +182,7 @@ class APIService {
 
   // Export all tickets to Excel
   static async exportTickets() {
-    const url = `${this.baseURL}/tickets/export/`;
+    const url = `${this.baseURL}/api/tickets/export/`;
     console.log('Exporting all tickets to Excel');
     
     try {
@@ -236,7 +242,7 @@ class APIService {
     }
     
     try {
-      const response = await this.request('/tickets/bulk-upload/', {
+      const response = await this.request('/api/tickets/bulk-upload/', {
         method: 'POST',
         body: formData,
         // Don't set Content-Type header - let the browser set it with the correct boundary
@@ -253,18 +259,18 @@ class APIService {
   }
 
   static async createTicket(ticketData) {
-    return this.request('/tickets/create/', {
+    return this.request('/api/tickets/create/', {
       method: 'POST',
       body: JSON.stringify(ticketData),
     });
   }
 
   static async getTicketDetail(id) {
-    return this.request(`/tickets/${id}/`);
+    return this.request(`/api/tickets/${id}/`);
   }
 
   static async updateTicket(id, data) {
-    return this.request(`/tickets/${id}/`, {
+    return this.request(`/api/tickets/${id}/`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
@@ -287,7 +293,7 @@ class APIService {
       ...filters
     });
     
-    const response = await this.request(`/admin/cti-records/?${queryParams.toString()}`);
+    const response = await this.request(`/api/admin/cti-records/?${queryParams.toString()}`);
     
     // Ensure consistent response format
     return {
@@ -315,7 +321,8 @@ class APIService {
       ...filters
     });
     
-    const response = await this.request(`/cti/?${queryParams.toString()}`);
+    const response = await this.request(`/api/cti/?${queryParams.toString()}`);
+
     
     // Ensure consistent response format
     return {
@@ -327,77 +334,77 @@ class APIService {
   }
 
   static async getCTIExamples(ctiId) {
-    return this.request(`/cti/${ctiId}/examples/`);
+    return this.request(`/api/cti/${ctiId}/examples/`);
   }
 
   // Admin methods
   static async precomputeEmbeddings() {
-    return this.request('/admin/precompute-embeddings/', {
+    return this.request('/api/admin/precompute-embeddings/', {
       method: 'POST',
     });
   }
 
   static async getClassificationStats() {
-    return this.request('/admin/stats/');
+    return this.request('/api/admin/stats/');
   }
 
   // Admin CTI Management methods
   static async getAdminCTIRecords(params = {}) {
     const queryString = new URLSearchParams(params).toString();
-    return this.request(`/cti/?${queryString}`);
+    return this.request(`/api/cti/?${queryString}`);
   }
 
   static async createCTIRecord(data) {
-    return this.request('/cti/', {
+    return this.request('/api/cti/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   static async updateCTIRecord(id, data) {
-    return this.request(`/cti/${id}/`, {
+    return this.request(`/api/cti/${id}/`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   static async deleteCTIRecord(id) {
-    return this.request(`/cti/${id}/`, {
+    return this.request(`/api/cti/${id}/`, {
       method: 'DELETE',
     });
   }
 
   static async regenerateCTIEmbedding(id) {
-    return this.request(`/cti/${id}/regenerate-embedding/`, {
+    return this.request(`/api/admin/cti/${id}/regenerate-embedding/`, {
       method: 'POST',
     });
   }
 
   static async bulkCTIActions(data) {
-    return this.request('/cti/bulk-actions/', {
+    return this.request('/api/admin/cti/bulk-actions/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   static async getCTIFilterOptions() {
-    return this.request('/cti/filter-options/');
+    return this.request('/api/cti/filter-options/');
   }
 
   // CTI Recommendations methods
   static async getCTIRecommendations() {
-    return this.request('/admin/cti-recommendations/');
+    return this.request('/api/admin/cti-recommendations/');
   }
 
   static async applyCTIRecommendation(recommendationId, action) {
-    return this.request(`/admin/cti-recommendations/${recommendationId}/apply/`, {
+    return this.request(`/api/admin/cti-recommendations/${recommendationId}/apply/`, {
       method: 'POST',
       body: JSON.stringify({ action })
     });
   }
 
   static async importCTIRecords(formData) {
-    return this.request('/cti/import-csv/', {
+    return this.request('/api/admin/cti/import-csv/', {
       method: 'POST',
       body: formData,
       headers: {}, // Let browser set content-type for FormData
@@ -407,71 +414,71 @@ class APIService {
   // Training Examples
   static async getTrainingExamples(params = {}) {
     const queryString = new URLSearchParams(params).toString();
-    return this.request(`/training-examples/?${queryString}`);
+    return this.request(`/api/training-examples/?${queryString}`);
   }
 
   static async createTrainingExample(data) {
-    return this.request('/training-examples/', {
+    return this.request('/api/training-examples/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   static async updateTrainingExample(id, data) {
-    return this.request(`/training-examples/${id}/`, {
+    return this.request(`/api/training-examples/${id}/`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   static async deleteTrainingExample(id) {
-    return this.request(`/training-examples/${id}/`, {
+    return this.request(`/api/training-examples/${id}/`, {
       method: 'DELETE',
     });
   }
 
   static async getCTITrainingExamples(ctiId) {
-    return this.request(`/cti/${ctiId}/training-examples/`);
+    return this.request(`/api/cti/${ctiId}/training-examples/`);
   }
 
   static async getTrainingStats() {
-    return this.request('/training-stats/');
+    return this.request('/api/training-stats/');
   }
 
   // AI Performance Analytics
   static async getAIPerformanceAnalytics() {
-    return this.request('/ai-performance-analytics/');
+    return this.request('/api/ai-performance-analytics/');
   }
 
   // Smart Recommendations - Implementation moved to the first declaration
 
   // CTI Trends (for enhanced stats)
   static async getCTITrends() {
-    return this.request('/cti-trends/');
+    return this.request('/api/cti-trends/');
   }
 
   // Table Management - Tickets
   static async getTicketTableData(params = {}) {
     const queryString = new URLSearchParams(params).toString();
-    return this.request(`/table/tickets/?${queryString}`);
+    return this.request(`/api/table/tickets/?${queryString}`);
   }
 
   static async updateTicketTableRow(id, data) {
-    return this.request(`/table/tickets/${id}/`, {
+    return this.request(`/api/table/tickets/${id}/`, {
       method: 'PATCH',
       body: JSON.stringify(data)
     });
   }
 
   static async bulkUpdateTicketsTable(data) {
-    return this.request('/table/tickets/bulk_update/', {
+    return this.request('/api/table/tickets/bulk_update/', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
 
   static async bulkDeleteTickets(ids) {
-    return this.request('/table/tickets/bulk_delete/', {
+    return this.request('/api/table/tickets/bulk_delete/', {
       method: 'POST',
       body: JSON.stringify({ ids })
     });
@@ -480,25 +487,25 @@ class APIService {
   // Table Management - CTI Records
   static async getCTITableData(params = {}) {
     const queryString = new URLSearchParams(params).toString();
-    return this.request(`/table/cti/?${queryString}`);
+    return this.request(`/api/table/cti/?${queryString}`);
   }
 
   static async updateCTITableRow(id, data) {
-    return this.request(`/table/cti/${id}/`, {
+    return this.request(`/api/table/cti/${id}/`, {
       method: 'PATCH',
       body: JSON.stringify(data)
     });
   }
 
   static async bulkUpdateCTIRecords(data) {
-    return this.request('/table/cti/bulk_update/', {
+    return this.request('/api/table/cti/bulk_update/', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
 
   static async bulkDeleteCTIRecords(ids) {
-    return this.request('/table/cti/bulk_delete/', {
+    return this.request('/api/table/cti/bulk_delete/', {
       method: 'POST',
       body: JSON.stringify({ ids })
     });
@@ -507,32 +514,40 @@ class APIService {
   // Queue methods
   static async getQueueTickets(params = {}) {
     const queryString = new URLSearchParams(params).toString();
-    return this.request(`/queue/?${queryString}`);
+    return this.request(`/api/queue/?${queryString}`);
   }
 
   static async getQueueStats() {
-    return this.request('/queue/stats/');
+    return this.request('/api/queue/stats/');
   }
 
   static async getQueueFilters() {
-    return this.request('/queue/filters/');
+    return this.request('/api/queue/filters/');
   }
 
   static async bulkUpdateTickets(data) {
-    return this.request('/queue/bulk-update/', {
+    return this.request('/api/queue/bulk-update/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
+  /**
+   * Bulk delete tickets by their IDs
+   * @param {Array<number>} ids - Array of ticket IDs to delete
+   * @returns {Promise<Object>} Response from the server
+   */
+  static async bulkDeleteTickets(ids) {
+    return this.request('/api/tickets/bulk-delete/', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
+  }
+
+  // Bulk upload tickets with file handling
   static async bulkUploadTickets(formData) {
     // Get CSRF token using the standard Django cookie name
     const csrfToken = this.getCSRFToken();
-    
-    if (!csrfToken) {
-      console.error('No CSRF token found!');
-      throw new Error('CSRF token is required but not found. Please refresh the page and try again.');
-    }
     
     // Create a new FormData instance
     const formDataToSend = new FormData();
@@ -548,7 +563,7 @@ class APIService {
     formDataToSend.append('csrfmiddlewaretoken', csrfToken);
     
     try {
-      const response = await fetch(`${this.baseURL}/tickets/bulk-upload/`, {
+      const response = await fetch(`${this.baseURL}/api/queue/upload/`, {
         method: 'POST',
         body: formDataToSend,
         credentials: 'include',
@@ -573,7 +588,7 @@ class APIService {
   }
 
   static async autoAssignTickets() {
-    return this.request('/queue/auto-assign/', {
+    return this.request('/api/queue/auto-assign/', {
       method: 'POST',
     });
   }

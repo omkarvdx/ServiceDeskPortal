@@ -131,6 +131,7 @@ class TicketCreateView(generics.CreateAPIView):
 
         # Trigger AI classification
         try:
+            # Get initial prediction
             predicted_cti, confidence, justification = (
                 classification_service.classify_ticket(
                     ticket.summary, 
@@ -139,25 +140,53 @@ class TicketCreateView(generics.CreateAPIView):
                 )
             )
 
-            if predicted_cti:
-                ticket.predicted_cti = predicted_cti
-                ticket.prediction_confidence = confidence
-                ticket.prediction_justification = justification
-                ticket.save()
-                logger.info(
-                    f"Classified ticket {ticket.ticket_id} with confidence {confidence}"
+            # Ensure we have a valid CTI prediction, fall back to default if needed
+            final_cti, final_confidence, final_justification = (
+                classification_service.ensure_valid_cti_prediction(
+                    ticket=ticket,
+                    predicted_cti=predicted_cti,
+                    confidence=confidence,
+                    justification=justification
                 )
-                if confidence > 0.7:
+            )
+
+            # Update ticket with final CTI information
+            if final_cti:
+                ticket.predicted_cti = final_cti
+                ticket.prediction_confidence = final_confidence
+                ticket.prediction_justification = final_justification
+                ticket.save()
+                
+                logger.info(
+                    f"Classified ticket {ticket.ticket_id} with confidence {final_confidence}"
+                )
+                
+                # If confidence is high, record as a successful classification
+                if final_confidence > 0.7:
                     classification_service.record_successful_classification(
-                        ticket, predicted_cti, "ai"
+                        ticket, final_cti, "ai"
+                    )
+                elif final_cti.id == classification_service.DEFAULT_CTI_ID:
+                    logger.info(
+                        f"Using default CTI for ticket {ticket.ticket_id} - {final_justification}"
                     )
             else:
                 logger.warning(
-                    f"Could not classify ticket {ticket.ticket_id}: {justification}"
+                    f"Could not classify ticket {ticket.ticket_id} and no default available: {final_justification}"
                 )
 
         except Exception as e:
             logger.error(f"Error classifying ticket {ticket.ticket_id}: {e}")
+            # Try to use default CTI even if there's an error
+            try:
+                default_cti = classification_service.get_default_cti_record()
+                if default_cti:
+                    ticket.predicted_cti = default_cti
+                    ticket.prediction_confidence = 0.3  # Low confidence for error case
+                    ticket.prediction_justification = f"Error during classification: {str(e)[:200]}. Using default CTI."
+                    ticket.save()
+            except Exception as inner_e:
+                logger.error(f"Failed to set default CTI after error: {inner_e}")
 
 
 class ExcelFileResponse(HttpResponse):
@@ -374,6 +403,21 @@ class TicketListView(generics.ListAPIView):
 
         return queryset
 
+class TicketDeleteView(generics.DestroyAPIView):
+    """Delete a ticket"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == 'admin':
+            return Ticket.objects.all()
+        return Ticket.objects.filter(created_by=user)
+    
+    def perform_destroy(self, instance):
+        # Add any additional cleanup logic here if needed
+        instance.delete()
+
+
 class TicketDetailView(generics.RetrieveUpdateAPIView):
     """Get and update ticket details"""
 
@@ -398,6 +442,39 @@ class TicketDetailView(generics.RetrieveUpdateAPIView):
         if self.request.method in ["PUT", "PATCH"]:
             return TicketUpdateSerializer
         return TicketDetailSerializer
+
+
+class CTIRecordDetailView(generics.RetrieveUpdateAPIView):
+    """Retrieve and update individual CTI records"""
+    queryset = CTIRecord.objects.all()
+    serializer_class = CTIRecordCreateUpdateSerializer
+    permission_classes = [IsAdminOnly]
+    lookup_field = 'pk'
+    
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        
+        # Regenerate embedding if any relevant fields were updated
+        update_fields = serializer.validated_data.keys()
+        if any(field in update_fields for field in ['category', 'item', 'service_description', 'bu_description']):
+            self._regenerate_embedding_for_record(instance)
+            
+        return Response(CTIRecordSerializer(instance).data)
+    
+    def _regenerate_embedding_for_record(self, cti_record):
+        """Helper method to regenerate embedding for a CTI record"""
+        try:
+            cti_record.embedding = classification_service.generate_embedding(
+                f"{cti_record.category} {cti_record.item} {cti_record.service_description}"
+            )
+            cti_record.save(update_fields=['embedding'])
+            return True
+        except Exception as e:
+            logger.error(f"Failed to regenerate embedding for CTI record {cti_record.id}: {str(e)}")
+            return False
 
 
 class CTIRecordListView(generics.ListAPIView):

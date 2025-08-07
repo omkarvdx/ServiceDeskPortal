@@ -372,10 +372,48 @@ CORRECT CLASSIFICATION:
 
 class EnhancedTicketClassificationService(TicketClassificationService):
     """Classification service with few-shot example enhancements."""
+    
+    # Default CTI record ID to use when no good match is found
+    DEFAULT_CTI_ID = 1198  # Default CTI record ID
+    MIN_CONFIDENCE_THRESHOLD = 0.3  # Minimum confidence to accept a prediction
 
     def __init__(self):
         super().__init__()
         self.few_shot_service = FewShotExampleService(self)
+        self._default_cti = None
+        
+    def get_default_cti_record(self):
+        """Get the default CTI record, caching it for performance"""
+        if self._default_cti is None:
+            try:
+                self._default_cti = CTIRecord.objects.get(id=self.DEFAULT_CTI_ID)
+                logger.info(f"Successfully loaded default CTI record: {self._default_cti}")
+            except CTIRecord.DoesNotExist as e:
+                logger.error(f"Default CTI record with ID {self.DEFAULT_CTI_ID} not found: {e}")
+                return None
+        return self._default_cti  # Fixed typo: was _default_ctn
+        
+    def ensure_valid_cti_prediction(self, ticket, predicted_cti, confidence, justification):
+        """Ensure the predicted CTI is valid, fall back to default if needed"""
+        if predicted_cti and confidence >= self.MIN_CONFIDENCE_THRESHOLD:
+            return predicted_cti, confidence, justification
+            
+        # Fall back to default CTI
+        default_cti = self.get_default_cti_record()
+        if not default_cti:
+            return None, 0.0, "No valid prediction and default CTI not available"
+            
+        # Create a correction record if we had a prediction
+        if predicted_cti and ticket.id:
+            self.record_correction(
+                ticket=ticket,
+                original_prediction=predicted_cti,
+                corrected_to=default_cti,
+                corrected_by=None,  # System correction
+                notes=f"Auto-corrected to default CTI due to low confidence ({confidence:.2f})"
+            )
+            
+        return default_cti, 0.5, f"Using default CTI (ID: {default_cti.id}) - {justification}"
 
     def find_similar_cti_records(self, ticket_text, top_k=8, save_to_ticket=None):
         ticket_embedding = self.get_embedding(ticket_text)
