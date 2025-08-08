@@ -1,6 +1,6 @@
 // API Service for backend communication
 class APIService {
-  static baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+  static baseURL = process.env.REACT_APP_API_URL || 'https://adp.automationedge.com/servicedesk';
 
   // Try to obtain CSRF token from meta tag first and fall back to cookie
   static getCSRFToken() {

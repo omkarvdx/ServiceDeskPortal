@@ -157,17 +157,17 @@ const AdminCTIManagement = ({ user }) => {
   const fetchCTIRecords = useCallback(async () => {
     try {
       setLoading(true);
-      
+     
       // Create params object with all filters, removing empty values
       const params = new URLSearchParams();
-      
+     
       // Add all non-empty filters
       Object.entries(filters).forEach(([key, value]) => {
         if (value !== '' && value !== null && value !== undefined) {
           params.append(key, value);
         }
       });
-      
+     
       // Ensure page and page_size are always included
       if (!params.has('page')) {
         params.append('page', filters.page || 1);
@@ -175,11 +175,11 @@ const AdminCTIManagement = ({ user }) => {
       if (!params.has('page_size')) {
         params.append('page_size', filters.page_size || 25);
       }
-      
+     
       console.log('Fetching CTI records with params:', params.toString());
-      
+     
       const response = await APIService.request(`/api/admin/cti/?${params.toString()}`);
-      
+     
       // Handle paginated response
       if (response.results) {
         setCtiRecords(response.results);
@@ -409,7 +409,7 @@ const AdminCTIManagement = ({ user }) => {
       const response = await APIService.request(`/api/admin/cti/${recordId}/regenerate-embedding/`, {
         method: 'POST'
       });
-      
+     
       if (response.success) {
         await fetchCTIRecords();
         alert('Embedding regenerated successfully');
@@ -438,7 +438,7 @@ const AdminCTIManagement = ({ user }) => {
       };
 
       console.log('Sending bulk action request:', requestBody);
-      
+     
       // Use the base URL from APIService with the correct endpoint
       const response = await fetch(`${APIService.baseURL}/api/admin/cti/bulk-actions/`, {
         method: 'POST',
@@ -463,7 +463,7 @@ const AdminCTIManagement = ({ user }) => {
         statusText: response.statusText,
         data: responseData
       };
-      
+     
       console.log('Bulk action response:', responseInfo);
 
       if (!response.ok) {
@@ -488,7 +488,7 @@ const AdminCTIManagement = ({ user }) => {
         // Clear selection and refresh data
         setSelectedRecords(new Set());
         await fetchCTIRecords();
-        
+       
         // Handle response with warnings about skipped records
         if (responseData.warning) {
           setWarningMessage(
@@ -507,11 +507,11 @@ const AdminCTIManagement = ({ user }) => {
         stack: error.stack,
         response: error.response
       });
-      
+     
       // Set error message in state
       setErrorMessage(error.message || 'An error occurred during bulk action');
       setShowError(true);
-      
+     
       // Handle specific error cases
       if (error.message.toLowerCase().includes('csrf') || error.message.includes('CSRF')) {
         setErrorMessage('Your session has expired. Please refresh the page and try again.');
@@ -534,12 +534,12 @@ const AdminCTIManagement = ({ user }) => {
   const ensureCSRFToken = async () => {
     // First try to get from meta tag
     let csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-    
+   
     // If not in meta tag, try to get from cookies
     if (!csrfToken) {
       csrfToken = getCookie('csrftoken');
     }
-    
+   
     // If still not found, try to fetch it
     if (!csrfToken) {
       try {
@@ -554,11 +554,11 @@ const AdminCTIManagement = ({ user }) => {
         console.error('Failed to fetch CSRF token:', e);
       }
     }
-    
+   
     if (!csrfToken) {
       throw new Error('Failed to obtain CSRF token');
     }
-    
+   
     return csrfToken;
   };
   const [importProgress, setImportProgress] = useState(0);
@@ -571,7 +571,7 @@ const AdminCTIManagement = ({ user }) => {
     setImporting(true);
     setImportProgress(0);
     setImportResults(null);
-    
+   
     try {
       // Validate file type
       if (!file.name.toLowerCase().endsWith('.csv')) {
@@ -585,15 +585,15 @@ const AdminCTIManagement = ({ user }) => {
         strict: true, // Enable strict mode for better error reporting
         validate: true // Enable server-side validation
       }));
-      
+     
       // Get CSRF token
       const csrfToken = await ensureCSRFToken();
-      
+     
       console.log('Starting CSV import...');
-      
+     
       // Track upload progress
       const xhr = new XMLHttpRequest();
-      
+     
       // Create a promise to handle the XHR request
       const uploadPromise = new Promise((resolve, reject) => {
         xhr.upload.addEventListener('progress', (event) => {
@@ -640,24 +640,24 @@ const AdminCTIManagement = ({ user }) => {
 
       // Wait for the upload to complete
       const responseData = await uploadPromise;
-      
+     
       console.log('Import completed:', responseData);
       setImportResults(responseData);
 
       // Process the response
       if (responseData.success) {
         let successMessage = `Successfully imported ${responseData.created_count || 0} records`;
-        
+       
         if (responseData.updated_count) {
           successMessage += `, updated ${responseData.updated_count} records`;
         }
-        
+       
         if (responseData.error_count > 0) {
           // Show detailed error information
-          const errorDetails = (responseData.errors || []).map((error, index) => 
+          const errorDetails = (responseData.errors || []).map((error, index) =>
             `• ${error}`
           ).join('\n');
-          
+         
           setSuccessMessage(successMessage);
           setWarningMessage(
             `Import completed with ${responseData.error_count} error(s):\n\n${errorDetails}`
@@ -667,7 +667,7 @@ const AdminCTIManagement = ({ user }) => {
           setSuccessMessage(successMessage);
           setShowSuccess(true);
         }
-        
+       
         // Refresh the records
         await fetchCTIRecords();
       } else {
@@ -680,7 +680,7 @@ const AdminCTIManagement = ({ user }) => {
       });
       setErrorMessage(error.message || 'Failed to import CTI records');
       setShowError(true);
-      
+     
       if (error.message.toLowerCase().includes('csrf')) {
         // If CSRF error, suggest refreshing the page
         if (window.confirm('Your session may have expired. Would you like to refresh the page?')) {
@@ -697,10 +697,10 @@ const AdminCTIManagement = ({ user }) => {
           Object.entries(filters).filter(([_, value]) => value !== '')
         )
       );
-      
+     
       // Get CSRF token for the request
       const csrfToken = APIService.getCSRFToken();
-      
+     
       // Make the request to get the CSV data
       const response = await fetch(`${APIService.baseURL}/api/admin/cti/export-csv/?${params}`, {
         method: 'GET',
@@ -709,21 +709,24 @@ const AdminCTIManagement = ({ user }) => {
         },
         credentials: 'include',
       });
-      
+     
       if (!response.ok) {
         throw new Error('Failed to export CSV');
       }
-      
+     
       // Get the filename from the Content-Disposition header or use a default name
       const contentDisposition = response.headers.get('Content-Disposition');
       let filename = 'cti-export.csv';
+
       if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        // Run the regex on the contentDisposition header string
+        const filenameMatch = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)["']?/i);
+       
         if (filenameMatch && filenameMatch[1]) {
-          filename = filenameMatch[1];
+          filename = decodeURIComponent(filenameMatch[1]);
         }
       }
-      
+     
       // Create a blob from the response and trigger download
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -734,7 +737,7 @@ const AdminCTIManagement = ({ user }) => {
       a.click();
       window.URL.revokeObjectURL(url);
       a.remove();
-      
+     
     } catch (error) {
       console.error('Error exporting CSV:', error);
       alert('Failed to export CSV. Please try again.');
@@ -747,7 +750,7 @@ const AdminCTIManagement = ({ user }) => {
         ...prevFilters,
         page: newPage
       }));
-      
+     
       // Scroll to top when changing pages
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -970,7 +973,7 @@ const AdminCTIManagement = ({ user }) => {
               />
             </div>
           </div>
-          
+         
           {selectedRecords.size > 0 && (
             <button
               onClick={() => setShowBulkModal(true)}
@@ -1150,7 +1153,7 @@ const AdminCTIManagement = ({ user }) => {
                   {Math.min(pagination.current_page * filters.page_size, pagination.count)} of{' '}
                   {pagination.count} results
                 </div>
-                
+               
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => handlePageChange(1)}
@@ -1168,7 +1171,7 @@ const AdminCTIManagement = ({ user }) => {
                   >
                     Previous
                   </button>
-                  
+                 
                   <div className="flex items-center space-x-1">
                     {Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
                       // Calculate page numbers to show (current page in the middle when possible)
@@ -1182,7 +1185,7 @@ const AdminCTIManagement = ({ user }) => {
                       } else {
                         pageNum = pagination.current_page - 2 + i;
                       }
-                      
+                     
                       return (
                         <button
                           key={pageNum}
@@ -1198,7 +1201,7 @@ const AdminCTIManagement = ({ user }) => {
                       );
                     })}
                   </div>
-                  
+                 
                   <button
                     onClick={() => handlePageChange(pagination.current_page + 1)}
                     disabled={!pagination.next}
@@ -1216,7 +1219,7 @@ const AdminCTIManagement = ({ user }) => {
                     »
                   </button>
                 </div>
-                
+               
                 <div className="flex items-center text-sm text-gray-700">
                   <span className="mr-2">Page Size:</span>
                   <select
