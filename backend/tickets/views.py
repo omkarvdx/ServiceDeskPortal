@@ -955,8 +955,12 @@ class BulkTicketUploadView(APIView):
             # Create a file-like object
             csv_file = io.StringIO(csv_content)
             
-            # Read the CSV with proper handling of quoted fields
+            # Read the CSV and normalize headers to lowercase for case-insensitive matching
             reader = csv.DictReader(csv_file, quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            # Store the original fieldnames for potential error messages
+            original_headers = reader.fieldnames
+            # Convert all headers to lowercase
+            reader.fieldnames = [header.lower() if header else '' for header in (reader.fieldnames or [])]
 
             created_count = 0
             classified_count = 0
@@ -1005,10 +1009,10 @@ class BulkTicketUploadView(APIView):
             for row_data in rows_to_process:
                 with transaction.atomic():
                     try:
-                        # Create ticket
+                        # Create ticket with normalized case for text fields
                         ticket_data = {
-                            'summary': row_data['summary'],
-                            'description': row_data['description'],
+                            'summary': row_data['summary'].lower() if row_data['summary'] else '',
+                            'description': row_data['description'].lower() if row_data['description'] else '',
                             'created_by': row_data['user'],
                             'similar_cti_records': []
                         }
@@ -1027,11 +1031,16 @@ class BulkTicketUploadView(APIView):
                                 ticket_instance=ticket
                             )
 
-                            if predicted_cti:
+                            # Ensure we have a valid prediction, fall back to default if needed
+                            final_cti, final_confidence, final_justification = classification_service.ensure_valid_cti_prediction(
+                                ticket, predicted_cti, confidence, justification
+                            )
+
+                            if final_cti:
                                 update_fields = {
-                                    'predicted_cti': predicted_cti,
-                                    'prediction_confidence': confidence,
-                                    'prediction_justification': justification
+                                    'predicted_cti': final_cti,
+                                    'prediction_confidence': final_confidence,
+                                    'prediction_justification': final_justification
                                 }
                                 
                                 # Update the ticket with classification results
@@ -1039,16 +1048,17 @@ class BulkTicketUploadView(APIView):
                                     setattr(ticket, field, value)
                                 ticket.save(update_fields=list(update_fields.keys()) + ['similar_cti_records'])
                                 
-                                logger.info(f"Classified ticket {ticket.ticket_id} with confidence {confidence}")
+                                logger.info(f"Classified ticket {ticket.ticket_id} with confidence {final_confidence}")
                                 
-                                if confidence > 0.7:
+                                if final_confidence > 0.7:
                                     classification_service.record_successful_classification(
-                                        ticket, predicted_cti, "ai"
+                                        ticket, final_cti, "ai"
                                     )
                                     classified_count += 1
                             else:
-                                logger.warning(f"Could not classify ticket {ticket.ticket_id}: {justification}")
+                                logger.warning(f"Could not classify ticket {ticket.ticket_id} and no default CTI available")
                                 
+
                         except Exception as e:
                             logger.error(f"Error classifying ticket in bulk upload: {e}")
                             errors.append(f"Row {row_data['row_num']}: Error in AI classification - {str(e)}")
@@ -1103,6 +1113,21 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
             return CTIRecord.objects.none()
 
         queryset = super().get_queryset()
+        
+        # Handle case-insensitive search
+        search = self.request.query_params.get('search', None)
+        if search:
+            # Create case-insensitive conditions for all search fields
+            search_conditions = Q()
+            for field in self.search_fields:
+                search_conditions |= Q(**{f"{field}__icontains": search})
+            queryset = queryset.filter(search_conditions)
+            
+        # Handle case-insensitive filtering for exact matches
+        for field in self.filterset_fields:
+            value = self.request.query_params.get(field, None)
+            if value is not None:
+                queryset = queryset.filter(**{f"{field}__iexact": value})
 
         has_embedding = self.request.query_params.get("has_embedding")
         if has_embedding is not None:
@@ -1338,7 +1363,20 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
         csv_file = request.FILES["file"]
         try:
             csv_data = csv_file.read().decode("utf-8")
-            csv_reader = csv.DictReader(io.StringIO(csv_data))
+            # Create a StringIO object from the CSV data
+            csv_io = io.StringIO(csv_data)
+            # Read the first line to get the headers
+            headers = next(csv.reader([csv_io.readline()]))
+            # Create a mapping of lowercase headers to original headers
+            header_mapping = {header.lower(): header for header in headers}
+            # Reset the file pointer to the beginning
+            csv_io.seek(0)
+            # Create a DictReader with the original headers but use lowercase for fieldnames
+            csv_reader = csv.DictReader(csv_io, fieldnames=headers)
+            # Skip the header row since we already read it
+            next(csv_reader)
+            # Update the fieldnames to lowercase for case-insensitive access
+            csv_reader.fieldnames = [header.lower() for header in headers]
             
             created_count = 0
             updated_count = 0
