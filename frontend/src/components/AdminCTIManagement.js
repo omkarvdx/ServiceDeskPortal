@@ -154,6 +154,60 @@ const AdminCTIManagement = ({ user }) => {
   const [showError, setShowError] = useState(false);
   const [showRecommendations, setShowRecommendations] = useState(true);
 
+  const exportToCSV = async (format) => {
+    try {
+      // Build query string from current filters
+      const params = new URLSearchParams();
+      
+      // Add all non-empty filters
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== '' && value !== null && value !== undefined && key !== 'page' && key !== 'page_size') {
+          params.append(key, value);
+        }
+      });
+      
+      // Add format
+      params.append('format', format);
+      
+      // Call the admin export API
+      const baseUrl = APIService.baseURL.endsWith('/') ? APIService.baseURL : `${APIService.baseURL}/`;
+      const exportUrl = `${baseUrl}api/admin/cti/export/${params.toString() ? `?${params.toString()}` : ''}`;
+      
+      const response = await fetch(exportUrl, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'X-CSRFToken': APIService.getCSRFToken(),
+          'Accept': 'application/octet-stream',
+        },
+      });
+      
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || `HTTP error! status: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      
+      // Create a download link and trigger it
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cti_export_${new Date().toISOString().split('T')[0]}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+      
+      setSuccessMessage(`CTI records exported successfully as ${format.toUpperCase()}`);
+      setShowSuccess(true);
+    } catch (error) {
+      console.error('Export error:', error);
+      setErrorMessage(error.message || 'Failed to export CTI records');
+      setShowError(true);
+    }
+  };
+
   const fetchCTIRecords = useCallback(async () => {
     try {
       setLoading(true);
@@ -566,6 +620,7 @@ const AdminCTIManagement = ({ user }) => {
   const [importResults, setImportResults] = useState(null);
   const [warningMessage, setWarningMessage] = useState('');
   const [showWarning, setShowWarning] = useState(false);
+  const [exportFormat, setExportFormat] = useState('csv'); // 'csv' or 'xlsx'
 
   const handleImport = async (file, options) => {
     setImporting(true);
@@ -574,8 +629,9 @@ const AdminCTIManagement = ({ user }) => {
    
     try {
       // Validate file type
-      if (!file.name.toLowerCase().endsWith('.csv')) {
-        throw new Error('Please upload a valid CSV file');
+      const fileExt = file.name.toLowerCase().split('.').pop();
+      if (!['csv', 'xlsx'].includes(fileExt)) {
+        throw new Error('Please upload a valid CSV or Excel file');
       }
 
       const formData = new FormData();
@@ -633,7 +689,7 @@ const AdminCTIManagement = ({ user }) => {
       });
 
       // Open and send the request with the correct base URL
-      xhr.open('POST', `${APIService.baseURL}/api/admin/cti/import-csv/`);
+      xhr.open('POST', `${APIService.baseURL}/api/admin/cti/import/`);
       xhr.setRequestHeader('X-CSRFToken', csrfToken);
       xhr.withCredentials = true; // Important for sending cookies with CORS
       xhr.send(formData);
@@ -690,45 +746,27 @@ const AdminCTIManagement = ({ user }) => {
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = async (format = exportFormat) => {
     try {
-      const params = new URLSearchParams(
-        Object.fromEntries(
-          Object.entries(filters).filter(([_, value]) => value !== '')
-        )
-      );
-     
-      // Get CSRF token for the request
-      const csrfToken = APIService.getCSRFToken();
-     
-      // Make the request to get the CSV data
-      const response = await fetch(`${APIService.baseURL}/api/admin/cti/export-csv/?${params}`, {
-        method: 'GET',
-        headers: {
-          'X-CSRFToken': csrfToken,
-        },
-        credentials: 'include',
-      });
-     
-      if (!response.ok) {
-        throw new Error('Failed to export CSV');
-      }
-     
-      // Get the filename from the Content-Disposition header or use a default name
-      const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = 'cti-export.csv';
+      // Prepare filters, excluding pagination and ordering
+      const exportFilters = {
+        category: filters.category,
+        type: filters.type,
+        resolver_group: filters.resolver_group,
+        request_type: filters.request_type,
+        sla: filters.sla,
+        search: filters.search
+      };
 
-      if (contentDisposition) {
-        // Run the regex on the contentDisposition header string
-        const filenameMatch = contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)["']?/i);
-       
-        if (filenameMatch && filenameMatch[1]) {
-          filename = decodeURIComponent(filenameMatch[1]);
-        }
-      }
-     
-      // Create a blob from the response and trigger download
-      const blob = await response.blob();
+      // Call the API service to get the export file
+      const blob = await APIService.exportCTIRecords(format, exportFilters);
+      
+      // Generate a filename with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const extension = format === 'xlsx' ? 'xlsx' : 'csv';
+      const filename = `cti-export-${timestamp}.${extension}`;
+      
+      // Create and trigger download
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -737,10 +775,15 @@ const AdminCTIManagement = ({ user }) => {
       a.click();
       window.URL.revokeObjectURL(url);
       a.remove();
-     
+      
+      // Show success message
+      setSuccessMessage(`Successfully exported ${format.toUpperCase()} file`);
+      setShowSuccess(true);
+      
     } catch (error) {
-      console.error('Error exporting CSV:', error);
-      alert('Failed to export CSV. Please try again.');
+      console.error('Error exporting file:', error);
+      setErrorMessage(error.message || 'Failed to export file. Please try again.');
+      setShowError(true);
     }
   };
 
@@ -806,20 +849,46 @@ const AdminCTIManagement = ({ user }) => {
           </p>
         </div>
         <div className="flex items-center space-x-3">
-          <button
-            onClick={() => setShowImportModal(true)}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center"
-          >
-            <Upload className="w-4 h-4 mr-2" />
-            Import CSV
-          </button>
-          <button
-            onClick={handleExport}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </button>
+          <div className="relative group">
+            <button
+              onClick={() => setShowImportModal(true)}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Import File
+            </button>
+            <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg py-1 z-10 hidden group-hover:block">
+              <div className="px-4 py-2 text-sm text-gray-700 border-b">
+                <span className="font-medium">Supported formats:</span>
+                <div className="text-xs text-gray-500">.csv, .xlsx</div>
+              </div>
+            </div>
+          </div>
+          <div className="relative group">
+            <button
+              onClick={() => exportToCSV('csv')}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              title="Export to CSV"
+              disabled={loading}
+            >
+              <Download className="w-4 h-4" />
+              Export
+            </button>
+            <div className="absolute right-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200 z-10 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+              <button 
+                onClick={() => exportToCSV('csv')}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              >
+                Export as CSV
+              </button>
+              <button 
+                onClick={() => exportToCSV('xlsx')}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              >
+                Export as Excel
+              </button>
+            </div>
+          </div>
           <button
             onClick={handleCreate}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center"
@@ -1273,6 +1342,10 @@ const AdminCTIManagement = ({ user }) => {
         isOpen={showImportModal}
         onClose={() => setShowImportModal(false)}
         onImport={handleImport}
+        progress={importProgress}
+        importing={importing}
+        results={importResults}
+        acceptedFormats=".csv, .xlsx"
       />
       <KeyboardShortcutsHelp
         isOpen={showShortcutsHelp}

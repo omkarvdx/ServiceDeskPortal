@@ -374,7 +374,7 @@ class EnhancedTicketClassificationService(TicketClassificationService):
     """Classification service with few-shot example enhancements."""
     
     # Default CTI record ID to use when no good match is found
-    DEFAULT_CTI_ID = 1858  # Default CTI record ID
+    DEFAULT_CTI_ID = 6395  # Default CTI record ID
     MIN_CONFIDENCE_THRESHOLD = 0.3  # Minimum confidence to accept a prediction
 
     def __init__(self):

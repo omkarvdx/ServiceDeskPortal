@@ -111,43 +111,65 @@ const CTIReadOnlyView = ({ user }) => {
   const exportToCSV = async () => {
     try {
       setLoading(true);
-      const response = await APIService.getCTIRecordsReadOnly({
-        ...filters,
-        page_size: 10000, // A large number to get all records
-        page: 1,
-        ordering: ''
-      });
       
-      const records = response.results || [];
-      const headers = ['BU Number', 'Category', 'Type', 'Item', 'Resolver Group', 'Request Type', 'SLA', 'Service Description', 'BU Description', 'Resolver Group Description'];
+      // Get the current search query from filters
+      const searchParams = new URLSearchParams();
+      if (filters.search) {
+        searchParams.append('search', filters.search);
+      }
+      if (filters.ordering) {
+        searchParams.append('ordering', filters.ordering);
+      }
       
-      const csvContent = [
-        headers.join(','),
-        ...records.map(record => [
-          `"${(record.bu_number || '').replace(/"/g, '""')}"`,
-          `"${(record.category || '').replace(/"/g, '""')}"`,
-          `"${(record.type || '').replace(/"/g, '""')}"`,
-          `"${(record.item || '').replace(/"/g, '""')}"`,
-          `"${(record.resolver_group || '').replace(/"/g, '""')}"`,
-          `"${(record.request_type || '').replace(/"/g, '""')}"`,
-          `"${(record.sla || '').replace(/"/g, '""')}"`,
-          `"${(record.service_description || '').replace(/"/g, '""')}"`,
-          `"${(record.bu_description || '').replace(/"/g, '""')}"`,
-          `"${(record.resolver_group_description || '').replace(/"/g, '""')}"`,
-        ].join(','))
-      ].join('\n');
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      // Add format parameter
+      searchParams.append('format', 'csv');
+      
+      // Call the export endpoint
+      const response = await APIService.exportCTIRecords(searchParams.toString());
+      
+      // Create a download link for the blob
+      const url = window.URL.createObjectURL(new Blob([response]));
       const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
       link.href = url;
-      link.setAttribute('download', `cti_records_${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute('download', `cti_export_${new Date().toISOString().split('T')[0]}.csv`);
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      link.remove();
+      
     } catch (error) {
       console.error('Error exporting to CSV:', error);
+      // Fallback to client-side export if the API fails
+      try {
+        const response = await APIService.getCTIRecordsReadOnly({
+          ...filters,
+          page_size: 10000,
+          page: 1,
+          ordering: filters.ordering || 'id'
+        });
+        
+        const records = response.results || [];
+        const headers = ['id', 'bu_number', 'bu_description', 'category', 'type', 'item', 
+                        'resolver_group', 'resolver_group_description', 'request_type', 'sla', 'service_description'];
+        
+        const csvContent = [
+          headers.join(','),
+          ...records.map(record => headers.map(header => 
+            `"${String(record[header] || '').replace(/"/g, '""')}"`
+          ).join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `cti_export_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } catch (fallbackError) {
+        console.error('Fallback export failed:', fallbackError);
+      }
     } finally {
       setLoading(false);
     }
@@ -166,15 +188,31 @@ const CTIReadOnlyView = ({ user }) => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={exportToCSV}
-            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-            title="Export to CSV"
-            disabled={loading}
-          >
-            <Download className="w-4 h-4" />
-            Export CSV
-          </button>
+          <div className="relative group">
+            <button
+              onClick={() => exportToCSV('csv')}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              title="Export to CSV"
+              disabled={loading}
+            >
+              <Download className="w-4 h-4" />
+              Export
+            </button>
+            <div className="absolute right-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200 z-10 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+              <button 
+                onClick={() => exportToCSV('csv')}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              >
+                Export as CSV
+              </button>
+              <button 
+                onClick={() => exportToCSV('xlsx')}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              >
+                Export as Excel
+              </button>
+            </div>
+          </div>
           <div className="bg-blue-50 border border-blue-200 px-4 py-2 rounded-lg">
             <div className="flex items-center text-blue-700">
               <AlertCircle className="w-4 h-4 mr-2" />

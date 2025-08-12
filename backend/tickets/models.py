@@ -39,12 +39,24 @@ class CTIRecord(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        unique_together = ['bu_number', 'category', 'type', 'item']
+        unique_together = [
+            'bu_number',
+            'category',
+            'type',
+            'item',
+            'resolver_group',
+            'request_type',
+            'sla',
+            'service_description',
+            'bu_description',
+            'resolver_group_description'
+        ]
         verbose_name = "CTI Record"
         verbose_name_plural = "CTI Records"
         indexes = [
             models.Index(fields=['category', 'type']),
             models.Index(fields=['resolver_group']),
+            models.Index(fields=['request_type']),
         ]
     
     def __str__(self):
@@ -72,7 +84,7 @@ class Ticket(models.Model):
     
     # Basic ticket info
     ticket_id = models.CharField(max_length=20, unique=True)
-    summary = models.CharField(max_length=200)
+    summary = models.TextField()
     description = models.TextField()
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_tickets')
     created_at = models.DateTimeField(default=timezone.now)
