@@ -1,20 +1,27 @@
 import React, { useState } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const CTIImportModal = ({ isOpen, onClose, onImport }) => {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [fileType, setFileType] = useState(null); // 'csv' or 'xlsx'
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
-      if (selectedFile.type !== 'text/csv' && !selectedFile.name.endsWith('.csv')) {
-        setError('Please select a CSV file');
+      const fileExt = selectedFile.name.split('.').pop().toLowerCase();
+      const isValidFile = ['csv', 'xlsx', 'xls'].includes(fileExt);
+      
+      if (!isValidFile) {
+        setError('Please select a CSV or Excel file (.csv, .xlsx, .xls)');
         return;
       }
+      
       setFile(selectedFile);
+      setFileType(fileExt === 'xls' ? 'xlsx' : fileExt); // Normalize xls to xlsx
       setError('');
       setResult(null);
     }
@@ -31,12 +38,37 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
     setResult(null);
 
     try {
+      let fileToSend = file;
+      const fileExt = file.name.split('.').pop().toLowerCase();
+      
+      // If Excel file, validate the structure before sending
+      if (fileExt === 'xlsx' || fileExt === 'xls') {
+        const data = await file.arrayBuffer();
+        const workbook = XLSX.read(data);
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+        
+        // Basic validation - check if all columns exist
+        if (jsonData.length > 0) {
+          const firstRow = jsonData[0];
+          const allColumns = [
+            'category', 'type', 'item', 'resolver_group', 'resolver_group_description', 
+            'request_type', 'sla', 'bu_number', 'bu_description', 'service_description'
+          ];
+          const missingColumns = allColumns.filter(column => !(column in firstRow));
+          
+          if (missingColumns.length > 0) {
+            throw new Error(`Missing columns in the file: ${missingColumns.join(', ')}`);
+          }
+        }
+      }
+      
       const importResult = await onImport(file);
       setResult(importResult);
       setFile(null);
       
       // Reset file input
-      const fileInput = document.getElementById('csv-file-input');
+      const fileInput = document.getElementById('cti-file-input');
       if (fileInput) {
         fileInput.value = '';
       }
@@ -55,21 +87,39 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
     onClose();
   };
 
-  const downloadTemplate = () => {
-    const csvContent = `bu_number,bu_description,category,type,item,resolver_group,resolver_group_description,request_type,sla,service_description
-753,Managed Workspace,Access Management,Password Reset,EOH Remote Support iOCO,Incident,P3,"Password reset assistance for user accounts"
-753,Managed Workspace,Access Management,Profile - AD,EOH MYHR-AD Support iOCO,Request,P4,"Active Directory profile management and configuration"
-753,End User Computing,Hardware Support,Laptop Issues,EOH Hardware Support iOCO,Incident,P3,"Physical laptop hardware problems and repairs"`;
-    
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'cti_template.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
+  const [showTemplateOptions, setShowTemplateOptions] = useState(false);
+
+  const downloadTemplate = (format) => {
+    if (format === 'xlsx') {
+      // Create Excel workbook with sample data
+      const wb = XLSX.utils.book_new();
+      const wsData = [
+        ['category', 'type', 'item', 'resolver_group', 'resolver_group_description', 'request_type', 'sla', 'bu_number', 'bu_description', 'service_description'],
+        ['Access Management', 'Password Reset', 'Password Reset for User Account', 'EOH Remote Support iOCO', 'Handles all password related issues', 'Incident', 'P3', 753, 'Managed Workspace', 'Password reset assistance for user accounts'],
+        ['Access Management', 'Account Unlock', 'AD Account Unlock', 'EOH MYHR-AD Support iOCO', 'Manages Active Directory accounts', 'Request', 'P4', 753, 'Managed Workspace', 'Unlock Active Directory user account'],
+        ['End User Computing', 'Hardware Support', 'Laptop Hardware Issues', 'EOH Hardware Support iOCO', 'Handles all laptop hardware related issues', 'Incident', 'P3', 753, 'End User Computing', 'Physical laptop hardware problems and repairs']
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      XLSX.utils.book_append_sheet(wb, ws, 'CTI Template');
+      XLSX.writeFile(wb, 'cti_template.xlsx');
+    } else {
+      // Default to CSV format
+      const csvContent = `category,type,item,resolver_group,resolver_group_description,request_type,sla,bu_number,bu_description,service_description
+Access Management,Password Reset,Password Reset for User Account,EOH Remote Support iOCO,Handles all password related issues,Incident,P3,753,Managed Workspace,Password reset assistance for user accounts
+Access Management,Account Unlock,AD Account Unlock,EOH MYHR-AD Support iOCO,Manages Active Directory accounts,Request,P4,753,Managed Workspace,Unlock Active Directory user account
+End User Computing,Hardware Support,Laptop Hardware Issues,EOH Hardware Support iOCO,Handles all laptop hardware related issues,Incident,P3,753,End User Computing,Physical laptop hardware problems and repairs`;
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cti_template.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }
+    setShowTemplateOptions(false);
   };
 
   if (!isOpen) return null;
@@ -86,7 +136,7 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
               </div>
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">Import CTI Records</h2>
-                <p className="text-sm text-gray-600">Upload CSV file to bulk import CTI records</p>
+                <p className="text-sm text-gray-600">Upload CSV or Excel file to bulk import CTI records</p>
               </div>
             </div>
             <button
@@ -102,42 +152,68 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
         <div className="p-4 overflow-y-auto flex-1">
           {/* Template Download */}
           <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg mb-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
               <div>
                 <p className="text-sm font-medium text-blue-900">Need a template?</p>
-                <p className="text-xs text-blue-700">Download a sample CSV file with the correct format</p>
+                <p className="text-xs text-blue-700">Download a sample file with the correct format</p>
               </div>
-              <button
-                onClick={downloadTemplate}
-                className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors flex items-center"
-              >
-                <Download className="w-3 h-3 mr-1" />
-                Template
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setShowTemplateOptions(!showTemplateOptions)}
+                  className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors flex items-center"
+                >
+                  <Download className="w-3 h-3 mr-1" />
+                  Template
+                </button>
+                {showTemplateOptions && (
+                <div 
+                  className="absolute right-0 mt-1 w-32 bg-white rounded-md shadow-lg py-1 z-10 border border-gray-200"
+                  onMouseLeave={() => setShowTemplateOptions(false)}
+                >
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadTemplate('csv');
+                    }}
+                    className="block w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-gray-100"
+                  >
+                    Download as CSV
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadTemplate('xlsx');
+                    }}
+                    className="block w-full text-left px-3 py-1 text-xs text-gray-700 hover:bg-gray-100"
+                  >
+                    Download as Excel
+                  </button>
+                </div>
+                )}
+              </div>
             </div>
           </div>
 
           {/* File Upload */}
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select CSV File
+              Select CSV or Excel File
             </label>
             <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 transition-colors">
               <input
-                id="csv-file-input"
+                id="cti-file-input"
                 type="file"
-                accept=".csv"
+                accept=".csv,.xlsx,.xls"
                 onChange={handleFileChange}
                 className="hidden"
               />
-              <label htmlFor="csv-file-input" className="cursor-pointer">
+              <label htmlFor="cti-file-input" className="cursor-pointer">
                 <FileText className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                 <p className="text-sm text-gray-600">
-                  {file ? file.name : 'Click to select a CSV file'}
+                  {file ? file.name : 'Click to select a CSV or Excel file'}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  Required columns: category, type, item, resolver_group, request_type, sla
-                  <br />Optional: bu_number, bu_description, resolver_group_description, service_description
+                  Required columns: category, type, item, resolver_group, request_type, sla, bu_number, bu_description, resolver_group_description, service_description
                 </p>
               </label>
             </div>
@@ -147,7 +223,7 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
           <div className="mb-4">
             <details className="group">
               <summary className="flex justify-between items-center p-2 bg-gray-50 rounded-lg cursor-pointer">
-                <span className="text-sm font-medium text-gray-900">CSV Format Requirements</span>
+                <span className="text-sm font-medium text-gray-900">CSV/Excel Format Requirements</span>
                 <svg className="w-4 h-4 text-gray-500 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
@@ -227,7 +303,7 @@ const CTIImportModal = ({ isOpen, onClose, onImport }) => {
                 ) : (
                   <>
                     <Upload className="w-4 h-4 mr-2" />
-                    Import CSV
+                    Import CTI
                   </>
                 )}
               </button>

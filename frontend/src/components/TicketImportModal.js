@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle, Download } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const TicketImportModal = ({ isOpen, onClose, onImport }) => {
   const [file, setFile] = useState(null);
@@ -10,10 +11,14 @@ const TicketImportModal = ({ isOpen, onClose, onImport }) => {
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
-      if (selectedFile.type !== 'text/csv' && !selectedFile.name.endsWith('.csv')) {
-        setError('Please select a CSV file');
+      const fileExt = selectedFile.name.split('.').pop().toLowerCase();
+      const isValidFile = ['csv', 'xlsx', 'xls'].includes(fileExt);
+      
+      if (!isValidFile) {
+        setError('Please select a CSV or Excel file (.csv, .xlsx, .xls)');
         return;
       }
+      
       setFile(selectedFile);
       setError('');
       setResult(null);
@@ -53,17 +58,31 @@ const TicketImportModal = ({ isOpen, onClose, onImport }) => {
     onClose();
   };
 
-  const downloadTemplate = () => {
-    const csvContent = `summary,description,created_by\nPrinter not working,Unable to print,admin\nSoftware install request,Need Photoshop,admin`;
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'tickets_template.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
+  const downloadTemplate = (format = 'csv') => {
+    if (format === 'csv') {
+      const csvContent = `summary,description,created_by\nPrinter not working,Unable to print,admin\nSoftware install request,Need Photoshop,admin`;
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'tickets_template.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } else {
+      // For Excel template
+      const data = [
+        ['summary', 'description', 'created_by'],
+        ['Printer not working', 'Unable to print', 'admin'],
+        ['Software install request', 'Need Photoshop', 'admin']
+      ];
+      
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      XLSX.utils.book_append_sheet(wb, ws, 'Tickets');
+      XLSX.writeFile(wb, 'tickets_template.xlsx');
+    }
   };
 
   if (!isOpen) return null;
@@ -78,7 +97,7 @@ const TicketImportModal = ({ isOpen, onClose, onImport }) => {
             </div>
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Import Tickets</h2>
-              <p className="text-sm text-gray-600">Upload CSV file to bulk create tickets</p>
+              <p className="text-sm text-gray-600">Upload CSV or Excel file to bulk create tickets</p>
             </div>
           </div>
           <button
@@ -96,32 +115,51 @@ const TicketImportModal = ({ isOpen, onClose, onImport }) => {
                 <p className="text-sm font-medium text-blue-900">Need a template?</p>
                 <p className="text-xs text-blue-700">Download a sample CSV file with the correct format</p>
               </div>
-              <button
-                onClick={downloadTemplate}
-                className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors flex items-center"
-              >
-                <Download className="w-3 h-3 mr-1" />
-                Template
-              </button>
+              <div className="relative group">
+                <button
+                  type="button"
+                  className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors flex items-center"
+                >
+                  <Download className="w-3 h-3 mr-1" />
+                  Template
+                </button>
+                <div className="absolute right-0 mt-1 w-32 bg-white rounded-md shadow-lg py-1 z-10 hidden group-hover:block">
+                  <button
+                    onClick={() => downloadTemplate('csv')}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Download CSV
+                  </button>
+                  <button
+                    onClick={() => downloadTemplate('excel')}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    Download Excel
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select CSV File
+              Select File (CSV or Excel)
             </label>
             <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 transition-colors">
               <input
-                id="ticket-csv-input"
+                id="ticket-file-input"
                 type="file"
-                accept=".csv"
+                accept=".csv, .xlsx, .xls"
                 onChange={handleFileChange}
                 className="hidden"
               />
-              <label htmlFor="ticket-csv-input" className="cursor-pointer">
+              <label htmlFor="ticket-file-input" className="cursor-pointer">
                 <FileText className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                 <p className="text-sm text-gray-600">
-                  {file ? file.name : 'Click to select a CSV file'}
+                  {file ? file.name : 'Click to select a file'}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Supported formats: .csv, .xlsx, .xls
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
                   Required columns: summary, description, created_by
@@ -180,7 +218,7 @@ const TicketImportModal = ({ isOpen, onClose, onImport }) => {
                 ) : (
                   <>
                     <Upload className="w-4 h-4 mr-2" />
-                    Import CSV
+                    Import File
                   </>
                 )}
               </button>

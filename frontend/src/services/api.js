@@ -2,42 +2,68 @@
 class APIService {
   static baseURL = process.env.REACT_APP_API_URL || 'https://adp.automationedge.com/servicedesk';
 
-  // Try to obtain CSRF token from meta tag first and fall back to cookie
+  // Get CSRF token from cookie
   static getCSRFToken() {
+    // First try to get from meta tag
     const metaToken = document.querySelector('meta[name="csrf-token"]');
     if (metaToken) {
       return metaToken.getAttribute('content');
     }
-    return this.getCookie('csrftoken');
+    
+    // Fall back to cookie
+    const cookieMatch = document.cookie.match(/csrftoken=([^;]+)/);
+    if (cookieMatch) {
+      return cookieMatch[1];
+    }
+    
+    console.warn('CSRF token not found in cookies or meta tags');
+    return null;
   }
 
-  // Better cookie parsing when cookie might be missing
-  static getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) {
-      const token = parts.pop().split(';').shift();
-      return token || '';
-    }
-    return '';
+  // Get session ID from cookie
+  static getSessionId() {
+    const match = document.cookie.match(/sessionid=([^;]+)/);
+    return match ? match[1] : null;
+  }
+
+  // Get authentication token from localStorage or sessionStorage
+  static getAuthToken() {
+    return localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
   }
 
   static async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
-    const csrfToken = this.getCSRFToken();
     
+    // Set default headers
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      ...options.headers,
+    };
+    
+    // Add authentication token if available
+    const authToken = this.getAuthToken();
+    if (authToken) {
+      headers['Authorization'] = `Token ${authToken}`;
+    }
+    
+    // Add CSRF token for non-GET requests
+    if (options.method && options.method !== 'GET') {
+      const csrfToken = this.getCSRFToken();
+      if (csrfToken) {
+        headers['X-CSRFToken'] = csrfToken;
+      }
+    }
+    
+    // Configure fetch options
     const config = {
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(csrfToken && { 'X-CSRFToken': csrfToken }),
-        ...options.headers,
-      },
+      credentials: 'include', // Include cookies for CSRF
+      headers,
       ...options,
     };
 
     // Remove content-type header when sending FormData
-    if (config.body instanceof FormData) {
+    if (config.body && config.body instanceof FormData) {
       delete config.headers['Content-Type'];
     }
 
@@ -93,14 +119,61 @@ class APIService {
 
   // Authentication methods
   static async login(credentials) {
-    return this.request('/api/auth/login/', {
+    const response = await fetch(`${this.baseURL}/api/auth/login/`, {
       method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      credentials: 'include',
       body: JSON.stringify(credentials),
     });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Login failed');
+    }
+
+    const data = await response.json();
+    
+    // Store the auth token if received
+    if (data.token) {
+      localStorage.setItem('authToken', data.token);
+    }
+    
+    // Store user data if needed
+    if (data.user) {
+      localStorage.setItem('user', JSON.stringify(data.user));
+    }
+    
+    return data;
   }
 
   static async logout() {
-    return this.request('/api/auth/logout/', { method: 'POST' });
+    try {
+      // Try to call the server-side logout
+      await fetch(`${this.baseURL}/api/auth/logout/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-CSRFToken': this.getCSRFToken() || '',
+        },
+      });
+    } catch (error) {
+      console.error('Logout API call failed, proceeding with client-side cleanup', error);
+    } finally {
+      // Always clear client-side auth state
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('user');
+      sessionStorage.clear();
+      
+      // Clear cookies by setting expiration to past date
+      document.cookie = 'sessionid=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+      document.cookie = 'csrftoken=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+    }
+    
+    return { success: true };
   }
 
   static async getCurrentUser() {
@@ -233,9 +306,9 @@ class APIService {
     }
   }
 
-  // Import tickets from CSV
-  static async importTicketsCSV(formData) {
-    console.log('Sending import request to /tickets/bulk-upload/');
+  // Import tickets from CSV or Excel
+  static async importTicketsFile(formData) {
+    console.log('Sending import request to /api/tickets/bulk-upload/');
     console.log('FormData entries:');
     for (let pair of formData.entries()) {
       console.log(pair[0], pair[1]);
@@ -403,12 +476,105 @@ class APIService {
     });
   }
 
-  static async importCTIRecords(formData) {
-    return this.request('/api/admin/cti/import-csv/', {
+  /**
+   * Import CTI records from file (CSV or Excel)
+   * @param {File} file - The file to import (CSV or Excel)
+   * @returns {Promise<Object>} Import result with counts and any errors
+   */
+  static async importCTIRecords(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    // Use the new unified import endpoint
+    return this.request('/api/admin/cti/import/', {
       method: 'POST',
       body: formData,
-      headers: {}, // Let browser set content-type for FormData
     });
+  }
+
+  /**
+   * Export CTI records to file (CSV or Excel)
+   * @param {string} queryString - The query string with filters and format
+   * @returns {Promise<Blob>} The exported file as a Blob
+   */
+  static async exportCTIRecords(queryString = '') {
+    const url = `${this.baseURL}/api/admin/cti/export/${queryString ? `?${queryString}` : ''}`;
+    console.log('Exporting CTI records with query:', queryString);
+    
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'X-CSRFToken': this.getCSRFToken(),
+          'Accept': 'application/octet-stream',
+        },
+      });
+      
+      if (!response.ok) {
+        const error = await response.text();
+        console.error('Export error response:', error);
+        throw new Error(error || `HTTP error! status: ${response.status}`);
+      }
+      
+      // Return the blob directly for the component to handle
+      return await response.blob();
+      
+    } catch (error) {
+      console.error('Error exporting CTI records:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Export CTI records to file (CSV or Excel)
+   * @param {string} format - 'csv' or 'xlsx'
+   * @param {Object} filters - Optional filters to apply to the export
+   * @returns {Promise<Blob>} The exported file as a Blob
+   */
+  static async exportCTIRecordsOld(format = 'csv', filters = {}) {
+    // Ensure baseURL ends with a single slash
+    const baseUrl = this.baseURL.endsWith('/') ? this.baseURL : `${this.baseURL}/`;
+    
+    // Build the URL with the correct path that matches the backend
+    const url = new URL('api/admin/cti/export', baseUrl);
+    
+    // Add format parameter
+    url.searchParams.append('format', format);
+    
+    // Add other filters if provided (excluding pagination and ordering)
+    const validFilters = ['category', 'type', 'resolver_group', 'request_type', 'sla', 'search'];
+    
+    Object.entries(filters).forEach(([key, value]) => {
+      if (validFilters.includes(key) && value) {
+        url.searchParams.append(key, value);
+      }
+    });
+    
+    console.log('Export URL:', url.toString()); // Debug log
+    
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'Authorization': `Token ${this.getAuthToken()}`,
+        'Accept': format === 'xlsx' 
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'text/csv',
+      },
+      credentials: 'include',
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Export failed');
+    }
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Export failed');
+    }
+
+    return await response.blob();
   }
 
   // Training Examples

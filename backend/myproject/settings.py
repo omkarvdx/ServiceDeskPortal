@@ -31,6 +31,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'myproject.middleware.CsrfCookieMiddleware',  # Our custom CSRF middleware
 ]
 
 ROOT_URLCONF = 'myproject.urls'
@@ -67,13 +68,15 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 CSRF_COOKIE_SECURE = False  # Set to True in production with HTTPS
 CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript to read CSRF token
 CSRF_COOKIE_SAMESITE = 'Lax'
 CSRF_USE_SESSIONS = False
+CSRF_COOKIE_NAME = 'csrftoken'  # Explicitly set cookie name
+CSRF_HEADER_NAME = 'HTTP_X_CSRFTOKEN'  # Header your frontend will send
 
 # Session settings
 SESSION_COOKIE_SAMESITE = 'Lax'

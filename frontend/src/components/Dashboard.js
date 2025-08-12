@@ -226,87 +226,70 @@ const Dashboard = ({ user, onLogout }) => {
     try {
       setLoading(true);
       
-      // First, read the file to validate and process it
-      const data = await file.text();
+      // Check file extension
+      const fileExt = file.name.split('.').pop().toLowerCase();
+      const isCSV = fileExt === 'csv';
+      const isExcel = ['xlsx', 'xls'].includes(fileExt);
       
-      // Parse the CSV with proper options for handling newlines and special characters
-      const workbook = XLSX.read(data, {
-        type: 'string',
-        raw: true,
-        cellDates: true,
-        cellText: true,
-        codepage: 65001, // UTF-8
-        defval: ''
-      });
-      
-      // Get the first worksheet
-      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      
-      // Convert to JSON and clean the data
-      const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
-        header: 1,
-        defval: '',
-        blankrows: false,
-        raw: false,
-        dateNF: 'yyyy-mm-dd',
-        skipHidden: true
-      })
-      .filter((row, index) => index > 0 && row.length > 0) // Skip header and empty rows
-      .map((row, index) => ({
-        summary: row[0] || `Imported Ticket ${index + 1}`,
-        description: row[1] || 'No description provided',
-        category: row[2] || '',
-        type: row[3] || '',
-        item: row[4] || '',
-        resolver_group: row[5] || '',
-        request_type: row[6] || '',
-        sla: row[7] || '',
-        justification: row[8] || ''
-      }));
-      
-      // Check if record count exceeds 50
-      if (jsonData.length > 50) {
-        return { 
-          success: false, 
-          error: 'Maximum 50 records can be imported at a time. Your file contains ' + jsonData.length + ' records.'
+      if (!isCSV && !isExcel) {
+        return {
+          success: false,
+          error: 'Only CSV and Excel files are supported (.csv, .xlsx, .xls)'
         };
       }
-
+      
+      // File size check (5MB limit)
+      if (file.size > 5 * 1024 * 1024) {
+        return {
+          success: false,
+          error: 'File size must be less than 5MB'
+        };
+      }
+      
+      // For CSV files, we can do some basic validation in the frontend
+      if (isCSV) {
+        try {
+          const data = await file.text();
+          // Simple row count to estimate number of records (not perfect but lightweight)
+          const rowCount = data.split('\n').filter(line => line.trim().length > 0).length - 1; // subtract 1 for header
+          
+          if (rowCount > 50) {
+            return {
+              success: false,
+              error: `Maximum 50 records can be imported at a time. Your file contains approximately ${rowCount} records.`
+            };
+          }
+        } catch (error) {
+          console.error('Error reading CSV file:', error);
+          return {
+            success: false,
+            error: 'Error reading the CSV file. Please check the file format and try again.'
+          };
+        }
+      }
+      
       // Prepare form data for API
       const formData = new FormData();
       formData.append('file', file);
       formData.append('maxRecords', '50');
       
       // Process the file through the API
-      await APIService.importTicketsCSV(formData);
+      const response = await APIService.importTicketsFile(formData);
       await fetchTickets();
       
       return { 
         success: true, 
-        message: `Successfully imported ${jsonData.length} records!` 
+        message: response.message || 'File imported successfully!',
+        ...response
       };
     } catch (error) {
-      console.error('Error importing tickets:', error);
-      return { 
-        success: false, 
+      console.error('Error in handleTicketImport:', error);
+      return {
+        success: false,
         error: error.response?.data?.message || 'Failed to import tickets. Please check the file format and try again.'
       };
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleExportAll = async () => {
-    try {
-      setRefreshing(true);
-      console.log('Exporting tickets with filters:', filters);
-      await APIService.exportTickets(filters);
-    } catch (error) {
-      console.error('Error exporting tickets:', error);
-      // You might want to show an error toast/notification here
-      alert('Failed to export tickets. Please try again.');
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -478,10 +461,10 @@ const Dashboard = ({ user, onLogout }) => {
                     <button
                       onClick={() => setShowImportModal(true)}
                       className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors flex items-center shadow-sm"
-                      title="Import tickets from CSV"
+                      title="Import tickets from Excel or csv"
                     >
                       <Upload className="w-5 h-5 mr-2" />
-                      Bulk Import (CSV Max 50)
+                      Bulk Import Excel ( Max 50)
                     </button>
                     <button
                       onClick={() => exportToExcel(tickets)}

@@ -1,6 +1,7 @@
 # Standard library imports
 from datetime import datetime, timedelta
 import io
+import os
 import csv
 import logging
 
@@ -30,6 +31,9 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import generics, status, filters, permissions, viewsets, renderers
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.pagination import CTIRecordPagination
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import (
@@ -46,6 +50,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import (
     User, Ticket, CTIRecord, ClassificationCorrection, TrainingExample, FewShotExample
 )
+from .models import CTIRecord  # Explicit import for CTIRecord
 from .serializers import (
     UserSerializer, UserRegistrationSerializer, LoginSerializer,
     TicketCreateSerializer, TicketListSerializer, TicketDetailSerializer,
@@ -64,16 +69,38 @@ from .permissions import (
 logger = logging.getLogger(__name__)
 
 @api_view(["POST"])
+@ensure_csrf_cookie
 @permission_classes([permissions.AllowAny])
 def login_view(request):
     """User login endpoint"""
-    serializer = LoginSerializer(data=request.data)
+    # Get CSRF token from the request or generate a new one
+    csrf_token = get_token(request)
+    
+    serializer = LoginSerializer(data=request.data, context={'request': request})
     if serializer.is_valid():
         user = serializer.validated_data["user"]
         login(request, user)
-        return Response(
-            {"user": UserSerializer(user).data, "message": "Login successful"}
+        
+        # Create response with user data and CSRF token
+        response = Response(
+            {
+                "user": UserSerializer(user).data, 
+                "message": "Login successful",
+                "csrf_token": csrf_token
+            }
         )
+        
+        # Set CSRF cookie in the response
+        response.set_cookie(
+            'csrftoken',
+            csrf_token,
+            max_age=60 * 60 * 24 * 7,  # 1 week
+            httponly=False,  # Allow JavaScript to read the cookie
+            samesite='Lax',
+            secure=os.getenv('DJANGO_ENV') == 'production'  # Secure in production
+        )
+        
+        return response
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -88,8 +115,30 @@ def logout_view(request):
 @ensure_csrf_cookie
 @permission_classes([permissions.AllowAny])
 def csrf_token_view(request):
-    """Get CSRF token for frontend"""
-    return Response({"csrfToken": get_token(request)})
+    """
+    Get CSRF token for frontend.
+    This view ensures the CSRF cookie is set and returns the token.
+    """
+    # Get or create CSRF token
+    csrf_token = get_token(request)
+    
+    # Create response
+    response = Response({
+        "detail": "CSRF cookie set",
+        "csrftoken": csrf_token
+    })
+    
+    # Set CSRF cookie in the response
+    response.set_cookie(
+        'csrftoken',
+        csrf_token,
+        max_age=60 * 60 * 24 * 7,  # 1 week
+        httponly=False,  # Allow JavaScript to read the cookie
+        samesite='Lax',
+        secure=os.getenv('DJANGO_ENV') == 'production'  # Secure in production
+    )
+    
+    return response
 
 
 @api_view(["GET"])
@@ -922,45 +971,83 @@ def queue_filters(request):
 
 
 class BulkTicketUploadView(APIView):
-    """Bulk create tickets from a CSV file with AI classification"""
+    """Bulk create tickets from a CSV or Excel (xlsx) file with AI classification"""
     parser_classes = (MultiPartParser, FormParser)
     permission_classes = [IsAdminOnly]
 
-    def post(self, request, *args, **kwargs):
+    def _process_csv_file(self, file_obj):
+        """Process a CSV file and return a list of dictionaries"""
         import csv
         import io
         import chardet
-        from django.db import transaction
+        
+        file_content = file_obj.read()
+        
+        # Detect the file encoding
+        result = chardet.detect(file_content)
+        encoding = result['encoding']
+        
+        # Decode the content with the detected encoding
+        csv_content = file_content.decode(encoding)
+        
+        # Handle any problematic line endings
+        csv_content = csv_content.replace('\r\n', '\n').replace('\r', '\n')
+        
+        # Create a file-like object
+        csv_file = io.StringIO(csv_content)
+        
+        # Read the CSV and normalize headers to lowercase for case-insensitive matching
+        reader = csv.DictReader(csv_file, quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        # Store the original fieldnames for potential error messages
+        original_headers = reader.fieldnames
+        # Convert all headers to lowercase
+        reader.fieldnames = [header.lower() if header else '' for header in (reader.fieldnames or [])]
+        
+        return reader
+    
+    def _process_excel_file(self, file_obj):
+        """Process an Excel file and return a list of dictionaries"""
+        import pandas as pd
+        from io import BytesIO
+        
+        # Read the Excel file
+        try:
+            df = pd.read_excel(file_obj, engine='openpyxl')
+        except Exception as e:
+            raise ValueError(f"Error reading Excel file: {str(e)}")
+        
+        # Convert column names to lowercase for consistency
+        df.columns = df.columns.str.lower()
+        
+        # Convert DataFrame to list of dictionaries
+        return df.to_dict('records')
 
+    def post(self, request, *args, **kwargs):
+        from django.db import transaction
+        
         if "file" not in request.FILES:
             return Response(
                 {"success": False, "message": "No file provided"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        # Read the file content once
+            
+        file_obj = request.FILES['file']
+        file_extension = file_obj.name.split('.')[-1].lower()
+        
         try:
-            file_content = request.FILES['file'].read()
-            
-            # Detect the file encoding
-            result = chardet.detect(file_content)
-            encoding = result['encoding']
-            
-            # Decode the content with the detected encoding
-            csv_content = file_content.decode(encoding)
-            
-            # Handle any problematic line endings
-            csv_content = csv_content.replace('\r\n', '\n').replace('\r', '\n')
-            
-            # Create a file-like object
-            csv_file = io.StringIO(csv_content)
-            
-            # Read the CSV and normalize headers to lowercase for case-insensitive matching
-            reader = csv.DictReader(csv_file, quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            # Store the original fieldnames for potential error messages
-            original_headers = reader.fieldnames
-            # Convert all headers to lowercase
-            reader.fieldnames = [header.lower() if header else '' for header in (reader.fieldnames or [])]
+            # Process the file based on its extension
+            if file_extension == 'csv':
+                file_obj.seek(0)  # Reset file pointer
+                reader = self._process_csv_file(file_obj)
+                rows = list(reader)
+            elif file_extension in ['xlsx', 'xls']:
+                file_obj.seek(0)  # Reset file pointer
+                rows = self._process_excel_file(file_obj)
+            else:
+                return Response(
+                    {"success": False, "message": "Unsupported file format. Please upload a CSV or Excel (xlsx) file"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             created_count = 0
             classified_count = 0
@@ -971,9 +1058,21 @@ class BulkTicketUploadView(APIView):
             rows_to_process = []
             existing_ticket_ids = set(Ticket.objects.values_list('ticket_id', flat=True))
             
-            for row_num, row in enumerate(reader, start=2):
+            for row_num, row in enumerate(rows, start=2):
                 # Clean the row data
-                row = {k: (v.strip() if v else '') for k, v in row.items()}
+                cleaned_row = {}
+                for k, v in row.items():
+                    if v is not None:
+                        if isinstance(v, list):
+                            # If the value is a list, join it with commas
+                            cleaned_row[k] = ", ".join([str(item).strip() for item in v if item is not None])
+                        elif isinstance(v, str):
+                            cleaned_row[k] = v.strip()
+                        else:
+                            cleaned_row[k] = str(v).strip() if v is not None else ""
+                    else:
+                        cleaned_row[k] = ""
+                row = cleaned_row
                 
                 summary = row.get("summary", "")
                 description = row.get("description", "")
@@ -1086,6 +1185,106 @@ class BulkTicketUploadView(APIView):
                 {"success": False, "message": f"Import failed: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+def export_cti_records(request, is_admin=True):
+    """
+    Simple view function to export CTI records in CSV or Excel format.
+    
+    Args:
+        request: The HTTP request object
+        is_admin: Boolean indicating if this is an admin export (affects access control)
+    """
+    if is_admin and request.user.role != "admin":
+        return Response(
+            {"error": "Admin access required"}, 
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    import pandas as pd
+    from io import BytesIO
+    from django.http import HttpResponse
+    from rest_framework.request import Request
+
+    # Get format from query params, default to 'csv'
+    export_format = request.GET.get('format', 'csv').lower()
+    
+    # Get base queryset
+    queryset = CTIRecord.objects.all()
+    
+    # Apply filters from the request if this is a regular export
+    if not is_admin and hasattr(request, 'query_params'):
+        # This is a DRF request from the regular API
+        search = request.query_params.get('search', '')
+        if search:
+            queryset = queryset.filter(
+                Q(category__icontains=search) |
+                Q(type__icontains=search) |
+                Q(item__icontains=search) |
+                Q(resolver_group__icontains=search) |
+                Q(service_description__icontains=search)
+            )
+    
+    # Order the queryset
+    queryset = queryset.order_by('id')
+    
+    # Convert to list of dicts for pandas
+    data = []
+    for cti in queryset:
+        data.append({
+            "id": cti.id,
+            "bu_number": cti.bu_number or "",
+            "bu_description": cti.bu_description or "",
+            "category": cti.category or "",
+            "type": cti.type or "",
+            "item": cti.item or "",
+            "resolver_group": cti.resolver_group or "",
+            "resolver_group_description": cti.resolver_group_description or "",
+            "request_type": cti.request_type or "",
+            "sla": cti.sla or "",
+            "service_description": cti.service_description or "",
+        })
+    
+    if not data:
+        return Response({"error": "No data to export"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    
+    try:
+        # Handle Excel format
+        if export_format == 'xlsx':
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='CTI Records')
+            
+            response = HttpResponse(
+                output.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            filename = 'cti_export.xlsx'
+        
+        # Default to CSV
+        else:
+            response = HttpResponse(content_type='text/csv')
+            filename = 'cti_export.csv'
+            df.to_csv(path_or_buf=response, index=False, encoding='utf-8-sig')
+        
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error generating export file: {str(e)}")
+        return Response(
+            {"error": f"Failed to generate export: {str(e)}"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+# Wrapper function for regular CTI list export
+def export_cti_list(request):
+    """Export CTI records from the regular list view with applied filters"""
+    return export_cti_records(request, is_admin=False)
 
 
 class AdminCTIRecordViewSet(viewsets.ModelViewSet):
@@ -1353,16 +1552,29 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
         return Response(options)
 
     @action(detail=False, methods=["post"])
-    def import_csv(self, request):
+    def import_file(self, request):
+        """
+        Import CTI records from either CSV or Excel file.
+        The file type is determined by the file extension.
+        """
         if request.user.role != "admin":
             return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
 
         if "file" not in request.FILES:
             return Response({"success": False, "message": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-        csv_file = request.FILES["file"]
+        file_obj = request.FILES["file"]
+        file_extension = file_obj.name.split('.')[-1].lower()
+
+        if file_extension == 'xlsx':
+            return self._import_excel(file_obj)
+        else:
+            return self._import_csv(file_obj)
+
+    def _import_csv(self, file_obj):
+        """Helper method to import data from CSV file"""
         try:
-            csv_data = csv_file.read().decode("utf-8")
+            csv_data = file_obj.read().decode("utf-8")
             # Create a StringIO object from the CSV data
             csv_io = io.StringIO(csv_data)
             # Read the first line to get the headers
@@ -1378,64 +1590,118 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
             # Update the fieldnames to lowercase for case-insensitive access
             csv_reader.fieldnames = [header.lower() for header in headers]
             
-            created_count = 0
-            updated_count = 0
-            error_count = 0
-            errors = []
-
-            for row_num, row in enumerate(csv_reader, start=2):
-                try:
-                    cleaned_row = {k.strip(): v.strip() for k, v in row.items() if v and v.strip()}
-                    
-                    cti_data = {
-                        "bu_number": cleaned_row.get("bu_number", ""),
-                        "category": cleaned_row.get("category", ""),
-                        "type": cleaned_row.get("type", ""),
-                        "item": cleaned_row.get("item", ""),
-                        "resolver_group": cleaned_row.get("resolver_group", ""),
-                        "request_type": cleaned_row.get("request_type", ""),
-                        "sla": cleaned_row.get("sla", ""),
-                        "service_description": cleaned_row.get("service_description", ""),
-                        "bu_description": cleaned_row.get("bu_description", ""),
-                        "resolver_group_description": cleaned_row.get("resolver_group_description", ""),
-                    }
-
-                    required_fields = ["category", "type", "item"]
-                    missing_fields = [field for field in required_fields if not cti_data.get(field)]
-                    if missing_fields:
-                        errors.append(f"Row {row_num}: Missing required fields: {', '.join(missing_fields)}")
-                        error_count += 1
-                        continue
-                    
-                    # Use update_or_create for simplicity
-                    record, created = CTIRecord.objects.update_or_create(
-                        category=cti_data['category'],
-                        type=cti_data['type'],
-                        item=cti_data['item'],
-                        defaults=cti_data
-                    )
-                    
-                    self._regenerate_embedding_for_record(record)
-                    
-                    if created:
-                        created_count += 1
-                    else:
-                        updated_count += 1
-
-                except Exception as e:
-                    errors.append(f"Row {row_num}: {str(e)}")
-                    error_count += 1
+            return self._process_import_data(csv_reader)
             
-            return Response({
-                "success": True,
-                "created_count": created_count,
-                "updated_count": updated_count,
-                "error_count": error_count,
-                "errors": errors[:20],
-                "message": f"Import completed: {created_count} created, {updated_count} updated, {error_count} errors.",
-            })
         except Exception as e:
-            return Response({"success": False, "message": f"Import failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"success": False, "message": f"CSV import failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    def _import_excel(self, file_obj):
+        """Helper method to import data from Excel file"""
+        try:
+            import pandas as pd
+            from io import BytesIO
+            
+            # Read the Excel file into a pandas DataFrame
+            df = pd.read_excel(file_obj)
+            
+            # Convert column names to lowercase for consistency
+            df.columns = [str(col).strip().lower() for col in df.columns]
+            
+            # Convert DataFrame to list of dicts for processing
+            data = df.replace({pd.NA: None}).to_dict('records')
+            
+            # Process the data using our existing logic
+            return self._process_import_data(data)
+            
+        except Exception as e:
+            return Response({"success": False, "message": f"Excel import failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    def _process_import_data(self, data):
+        """Process imported data from either CSV or Excel"""
+        created_count = 0
+        updated_count = 0
+        error_count = 0
+        errors = []
+
+        for row_num, row in enumerate(data, start=2):
+            try:
+                # Clean the row data
+                cleaned_row = {}
+                for k, v in row.items():
+                    if v is not None:
+                        if isinstance(v, list):
+                            # If the value is a list, join it with commas
+                            cleaned_value = ", ".join([str(item).strip() for item in v if item is not None])
+                            cleaned_row[k.strip().lower()] = cleaned_value
+                        elif isinstance(v, str):
+                            cleaned_row[k.strip().lower()] = v.strip()
+                        else:
+                            cleaned_row[k.strip().lower()] = str(v).strip() if v is not None else ""
+                    else:
+                        cleaned_row[k.strip().lower()] = ""
+                
+                cti_data = {
+                    "bu_number": cleaned_row.get("bu_number", ""),
+                    "category": cleaned_row.get("category", ""),
+                    "type": cleaned_row.get("type", ""),
+                    "item": cleaned_row.get("item", ""),
+                    "resolver_group": cleaned_row.get("resolver_group", ""),
+                    "request_type": cleaned_row.get("request_type", ""),
+                    "sla": cleaned_row.get("sla", ""),
+                    "service_description": cleaned_row.get("service_description", ""),
+                    "bu_description": cleaned_row.get("bu_description", ""),
+                    "resolver_group_description": cleaned_row.get("resolver_group_description", ""),
+                }
+
+                required_fields = ["category", "type", "item"]
+                missing_fields = [field for field in required_fields if not cti_data.get(field)]
+                if missing_fields:
+                    errors.append(f"Row {row_num}: Missing required fields: {', '.join(missing_fields)}")
+                    error_count += 1
+                    continue
+                
+                # Check if an identical record already exists by checking all fields
+                existing_record = CTIRecord.objects.filter(
+                    bu_number=cti_data.get('bu_number', ''),
+                    category=cti_data['category'],
+                    type=cti_data['type'],
+                    item=cti_data['item'],
+                    resolver_group=cti_data.get('resolver_group', ''),
+                    request_type=cti_data.get('request_type', ''),
+                    sla=cti_data.get('sla', ''),
+                    service_description=cti_data.get('service_description', ''),
+                    bu_description=cti_data.get('bu_description', ''),
+                    resolver_group_description=cti_data.get('resolver_group_description', '')
+                ).first()
+
+                if existing_record:
+                    # Skip if an identical record exists
+                    updated_count += 1
+                    continue
+                
+                # If no identical record exists, create a new one
+                record = CTIRecord.objects.create(**cti_data)
+                created = True
+                
+                self._regenerate_embedding_for_record(record)
+                
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+
+            except Exception as e:
+                errors.append(f"Row {row_num}: {str(e)}")
+                error_count += 1
+        
+        return Response({
+            "success": True,
+            "created_count": created_count,
+            "updated_count": updated_count,
+            "error_count": error_count,
+            "errors": errors[:20],
+            "message": f"Import completed: {created_count} created, {updated_count} updated, {error_count} errors.",
+        })
 
     def _regenerate_embedding_for_record(self, cti_record):
         try:
@@ -1455,66 +1721,110 @@ class AdminCTIRecordViewSet(viewsets.ModelViewSet):
 
 
 @api_view(["GET"])
-@permission_classes([IsAdminOnly])
-def cti_export_csv(request):
+@permission_classes([IsAuthenticated])
+def cti_export(request):
+    """
+    Export CTI records in either CSV or Excel format based on the 'format' parameter.
+    Exports all records (ignores pagination).
+    Only accessible by admin users.
+    """
+    logger.info(f"Export endpoint called. User: {request.user}, Role: {getattr(request.user, 'role', 'N/A')}")
+    logger.info(f"Request path: {request.path}")
+    logger.info(f"Request GET params: {request.GET}")
+    
+    # Check if user is admin
+    if not request.user.is_authenticated or request.user.role != "admin":
+        logger.warning("Unauthorized access attempt to export endpoint")
+        return Response(
+            {"error": "Admin access required"}, 
+            status=status.HTTP_403_FORBIDDEN
+        )
 
-    import csv
+    import pandas as pd
+    from io import BytesIO
     from django.http import HttpResponse
 
-    response = HttpResponse(content_type="text/csv")
-    response["Content-Disposition"] = 'attachment; filename="cti_records.csv"'
-
-    writer = csv.writer(response)
-    writer.writerow(
-        [
-            "ID",
-            "BU Number",
-            "BU Description",
-            "Category",
-            "Type",
-            "Item",
-            "Resolver Group",
-            "Resolver Group Description",
-            "Request Type",
-            "SLA",
-            "Service Description",
-            "Has Embedding",
-            "Predicted Tickets",
-            "Corrected Tickets",
-            "Created At",
-            "Updated At",
-        ]
-    )
-
-    queryset = CTIRecord.objects.all()
-
+    # Get format from query params, default to 'csv'
+    export_format = request.GET.get('format', 'csv').lower()
+    
+    # Get all records (ignoring pagination)
+    queryset = CTIRecord.objects.all().order_by('-updated_at')
+    
+    # Apply filters if any
     category = request.GET.get("category")
     if category:
         queryset = queryset.filter(category=category)
-
-    for cti in queryset:
-        writer.writerow(
-            [
-                cti.id,
-                cti.bu_number,
-                cti.bu_description,
-                cti.category,
-                cti.type,
-                cti.item,
-                cti.resolver_group,
-                cti.resolver_group_description,
-                cti.request_type,
-                cti.sla,
-                cti.service_description,
-                "Yes" if cti.embedding_vector else "No",
-                cti.predicted_tickets.count(),
-                cti.corrected_tickets.count(),
-                cti.created_at.strftime("%Y-%m-%d %H:%M"),
-                cti.updated_at.strftime("%Y-%m-%d %H:%M"),
-            ]
+        
+    search = request.GET.get("search")
+    if search:
+        queryset = queryset.filter(
+            Q(category__icontains=search) |
+            Q(type__icontains=search) |
+            Q(item__icontains=search) |
+            Q(resolver_group__icontains=search) |
+            Q(service_description__icontains=search)
         )
 
-    return response
+    # Convert to list of dicts for pandas
+    data = []
+    for cti in queryset:
+        data.append({
+            "ID": cti.id,
+            "BU Number": cti.bu_number or "",
+            "BU Description": cti.bu_description or "",
+            "Category": cti.category or "",
+            "Type": cti.type or "",
+            "Item": cti.item or "",
+            "Resolver Group": cti.resolver_group or "",
+            "Resolver Group Description": cti.resolver_group_description or "",
+            "Request Type": cti.request_type or "",
+            "SLA": cti.sla or "",
+            "Service Description": cti.service_description or "",
+            "Has Embedding": "Yes" if cti.embedding_vector else "No",
+            "Predicted Tickets": cti.predicted_tickets.count(),
+            "Corrected Tickets": cti.corrected_tickets.count(),
+            "Created At": cti.created_at.strftime("%Y-%m-%d %H:%M") if cti.created_at else "",
+            "Updated At": cti.updated_at.strftime("%Y-%m-%d %H:%M") if cti.updated_at else "",
+        })
+    
+    if not data:
+        return Response({"error": "No data to export"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    
+    try:
+        # Handle Excel format
+        if export_format == 'xlsx':
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='CTI Records')
+            
+            # Create response with the Excel file
+            response = HttpResponse(
+                output.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            filename = 'cti_records.xlsx'
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        
+        # Default to CSV
+        else:
+            response = HttpResponse(content_type='text/csv')
+            filename = 'cti_records.csv'
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            df.to_csv(path_or_buf=response, index=False, encoding='utf-8-sig')
+            
+        # Add CORS headers if needed
+        response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error generating export file: {str(e)}")
+        return Response(
+            {"error": f"Failed to generate export: {str(e)}"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(["GET"])

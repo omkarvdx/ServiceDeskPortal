@@ -2,6 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
 from .views_table import TicketTableViewSet, CTITableViewSet
+from .views import export_cti_records, export_cti_list
 
 # Create a router and register our viewsets
 router = DefaultRouter()
@@ -88,11 +89,23 @@ urlpatterns = [
         name="admin_cti_filter_options",
     ),
     path(
+        "admin/cti/import/",
+        views.AdminCTIRecordViewSet.as_view({"post": "import_file"}),
+        name="admin_cti_import",
+    ),
+
+    # Admin export endpoint
+    path('admin/cti/export/', export_cti_records, name='cti-admin-export'),
+    
+    # Regular CTI list export endpoint
+    path('cti/export/', export_cti_list, name='cti-export'),
+    
+    # Backward compatibility
+    path(
         "admin/cti/import-csv/",
-        views.AdminCTIRecordViewSet.as_view({"post": "import_csv"}),
+        views.AdminCTIRecordViewSet.as_view({"post": "import_file"}),
         name="admin_cti_import_csv",
     ),
-    path("admin/cti/export-csv/", views.cti_export_csv, name="admin_cti_export_csv"),
     path("cti/<int:cti_id>/examples/", views.get_cti_examples, name="cti_examples"),
     # Training Examples Management
     path(
