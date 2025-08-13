@@ -695,18 +695,9 @@ class APIService {
     return this.request('/api/queue/bulk-update/', {
       method: 'POST',
       body: JSON.stringify(data),
-    });
-  }
-
-  /**
-   * Bulk delete tickets by their IDs
-   * @param {Array<number>} ids - Array of ticket IDs to delete
-   * @returns {Promise<Object>} Response from the server
-   */
-  static async bulkDeleteTickets(ids) {
-    return this.request('/api/tickets/bulk-delete/', {
-      method: 'POST',
-      body: JSON.stringify({ ids }),
+      headers: {
+        'Content-Type': 'application/json',
+      },
     });
   }
 

@@ -11,8 +11,8 @@ class Migration(migrations.Migration):
             reverse_sql="DROP INDEX IF EXISTS tickets_ticket_prediction_confidence_idx;"
         ),
         migrations.RunSQL(
-            "CREATE INDEX IF NOT EXISTS tickets_ticket_created_date_idx ON tickets_ticket(date(created_at));",
-            reverse_sql="DROP INDEX IF EXISTS tickets_ticket_created_date_idx;"
+            "CREATE INDEX IF NOT EXISTS tickets_ticket_created_at_idx ON tickets_ticket(created_at);",
+            reverse_sql="DROP INDEX IF EXISTS tickets_ticket_created_at_idx;"
         ),
         migrations.RunSQL(
             "CREATE INDEX IF NOT EXISTS tickets_ctirecord_usage_idx ON tickets_ctirecord(id) WHERE embedding_vector IS NOT NULL;",
