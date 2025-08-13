@@ -6,6 +6,7 @@ import debounce from 'lodash.debounce';
 const CTIReadOnlyView = ({ user }) => {
   const [ctiRecords, setCtiRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
   const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'asc' });
   const [showDescriptionModal, setShowDescriptionModal] = useState(false);
   const [selectedDescription, setSelectedDescription] = useState('');
@@ -108,8 +109,10 @@ const CTIReadOnlyView = ({ user }) => {
     }));
   };
   
-  const exportToCSV = async () => {
+  const exportToExcel = async () => {
     try {
+      // Set initial loading state
+      setIsExporting(true);
       setLoading(true);
       
       // Get the current search query from filters
@@ -122,55 +125,79 @@ const CTIReadOnlyView = ({ user }) => {
       }
       
       // Add format parameter
-      searchParams.append('format', 'csv');
+      searchParams.append('format', 'xlsx');
       
-      // Call the export endpoint
-      const response = await APIService.exportCTIRecords(searchParams.toString());
-      
-      // Create a download link for the blob
-      const url = window.URL.createObjectURL(new Blob([response]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `cti_export_${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      
-    } catch (error) {
-      console.error('Error exporting to CSV:', error);
-      // Fallback to client-side export if the API fails
       try {
-        const response = await APIService.getCTIRecordsReadOnly({
-          ...filters,
-          page_size: 10000,
-          page: 1,
-          ordering: filters.ordering || 'id'
-        });
+        // Call the export endpoint
+        const response = await APIService.exportCTIRecords(searchParams.toString());
         
-        const records = response.results || [];
-        const headers = ['id', 'bu_number', 'bu_description', 'category', 'type', 'item', 
-                        'resolver_group', 'resolver_group_description', 'request_type', 'sla', 'service_description'];
-        
-        const csvContent = [
-          headers.join(','),
-          ...records.map(record => headers.map(header => 
-            `"${String(record[header] || '').replace(/"/g, '""')}"`
-          ).join(','))
-        ].join('\n');
-
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
+        // Create a download link for the blob
+        const url = window.URL.createObjectURL(new Blob([response]));
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', `cti_export_${new Date().toISOString().split('T')[0]}.csv`);
+        link.setAttribute('download', `cti_export_${new Date().toISOString().split('T')[0]}.xlsx`);
         document.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      } catch (fallbackError) {
-        console.error('Fallback export failed:', fallbackError);
+        
+        // Clean up
+        setTimeout(() => {
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+          setIsExporting(false);
+          setLoading(false);
+        }, 100);
+        
+      } catch (error) {
+        console.error('Error exporting to Excel:', error);
+        // Fallback to client-side export if the API fails
+        try {
+          const response = await APIService.getCTIRecordsReadOnly({
+            ...filters,
+            page_size: 10000,
+            page: 1,
+            ordering: filters.ordering || 'id'
+          });
+          
+          const records = response.results || [];
+          const headers = ['id', 'bu_number', 'bu_description', 'category', 'type', 'item', 
+                          'resolver_group', 'resolver_group_description', 'request_type', 'sla', 'service_description'];
+          
+          // Fallback to CSV export if XLSX fails
+          const csvContent = [
+            headers.join(','),
+            ...records.map(record => 
+              headers.map(header => 
+                `"${String(record[header] || '').replace(/"/g, '""')}"`
+              ).join(',')
+            )
+          ].join('\n');
+
+          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          const fallbackUrl = URL.createObjectURL(blob);
+          const fallbackLink = document.createElement('a');
+          fallbackLink.href = fallbackUrl;
+          fallbackLink.setAttribute('download', `cti_export_${new Date().toISOString().split('T')[0]}.csv`);
+          document.body.appendChild(fallbackLink);
+          fallbackLink.click();
+          
+          // Clean up
+          setTimeout(() => {
+            document.body.removeChild(fallbackLink);
+            window.URL.revokeObjectURL(fallbackUrl);
+            setIsExporting(false);
+            setLoading(false);
+          }, 100);
+          
+        } catch (fallbackError) {
+          console.error('Fallback export failed:', fallbackError);
+          setIsExporting(false);
+          setLoading(false);
+        }
       }
-    } finally {
+      
+    } catch (error) {
+      console.error('Unexpected error during export:', error);
+      setIsExporting(false);
       setLoading(false);
     }
   };
@@ -188,31 +215,27 @@ const CTIReadOnlyView = ({ user }) => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="relative group">
-            <button
-              onClick={() => exportToCSV('csv')}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-              title="Export to CSV"
-              disabled={loading}
-            >
-              <Download className="w-4 h-4" />
-              Export
-            </button>
-            <div className="absolute right-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200 z-10 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-              <button 
-                onClick={() => exportToCSV('csv')}
-                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-              >
-                Export as CSV
-              </button>
-              <button 
-                onClick={() => exportToCSV('xlsx')}
-                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-              >
-                Export as Excel
-              </button>
-            </div>
-          </div>
+          <button
+            onClick={exportToExcel}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+            title="Export to Excel"
+            disabled={isExporting}
+          >
+            {isExporting ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Exporting...
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Export Excel
+              </>
+            )}
+          </button>
           <div className="bg-blue-50 border border-blue-200 px-4 py-2 rounded-lg">
             <div className="flex items-center text-blue-700">
               <AlertCircle className="w-4 h-4 mr-2" />

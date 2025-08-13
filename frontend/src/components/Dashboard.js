@@ -49,10 +49,44 @@ const Dashboard = ({ user, onLogout }) => {
     hasPrevious: false
   });
 
-  const exportToExcel = (tickets) => {
+  const exportToExcel = async () => {
     try {
+      setRefreshing(true);
+      
+      // Fetch all tickets without pagination
+      const allTickets = [];
+      let page = 1;
+      let hasMore = true;
+      
+      while (hasMore) {
+        const response = await APIService.getTickets(
+          { ...filters, page, pageSize: 100 } // Fetch 100 tickets per page
+        );
+        
+        if (response && response.results && response.results.length > 0) {
+          allTickets.push(...response.results);
+          
+          // Check if there are more pages
+          hasMore = response.next !== null;
+          page++;
+          
+          // Show progress to user
+          if (response.count) {
+            const progress = Math.min(100, Math.round((allTickets.length / response.count) * 100));
+            console.log(`Exporting tickets... ${progress}%`);
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+      
+      if (allTickets.length === 0) {
+        alert('No tickets found to export');
+        return;
+      }
+      
       // Prepare the data for export
-      const data = tickets.map(ticket => ({
+      const data = allTickets.map(ticket => ({
         'Ticket ID': ticket.ticket_id,
         'Summary': ticket.summary || '',
         'Description': ticket.description || '',
@@ -62,7 +96,10 @@ const Dashboard = ({ user, onLogout }) => {
         'Resolver Group': ticket.final_cti?.resolver_group || '',
         'Request Type': ticket.final_cti?.request_type || '',
         'SLA': ticket.final_cti?.sla || '',
-        'Justification': ticket.prediction_justification || ''
+        'Justification': ticket.prediction_justification || '',
+        'Status': ticket.status || '',
+        'Created At': ticket.created_at || '',
+        'Updated At': ticket.updated_at || ''
       }));
 
       // Create a new workbook
@@ -80,7 +117,10 @@ const Dashboard = ({ user, onLogout }) => {
         {wch: 25}, // Resolver Group
         {wch: 20}, // Request Type
         {wch: 15}, // SLA
-        {wch: 70}  // Justification
+        {wch: 70}, // Justification
+        {wch: 15}, // Status
+        {wch: 20}, // Created At
+        {wch: 20}  // Updated At
       ];
       ws['!cols'] = wscols;
       
@@ -94,6 +134,8 @@ const Dashboard = ({ user, onLogout }) => {
     } catch (error) {
       console.error('Error exporting to Excel:', error);
       alert('Error exporting tickets to Excel. Please try again.');
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -467,12 +509,22 @@ const Dashboard = ({ user, onLogout }) => {
                       Bulk Import Excel ( Max 50)
                     </button>
                     <button
-                      onClick={() => exportToExcel(tickets)}
-                      className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center shadow-sm"
-                      title="Export to Excel"
+                      onClick={exportToExcel}
+                      disabled={refreshing}
+                      className={`bg-green-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center shadow-sm ${refreshing ? 'opacity-70 cursor-not-allowed' : 'hover:bg-green-700'}`}
+                      title="Export all tickets to Excel"
                     >
-                      <FileDown className="w-5 h-5 mr-2" />
-                      Export to Excel
+                      {refreshing ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Exporting...
+                        </>
+                      ) : (
+                        <>
+                          <FileDown className="w-5 h-5 mr-2" />
+                          Export All to Excel
+                        </>
+                      )}
                     </button>
                   </>
                 )}
